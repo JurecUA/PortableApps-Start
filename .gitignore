@@ -1,0 +1,11 @@
+# Downloaded archives and temporary source extraction
+/work/
+
+# Build products
+/build/
+/dist/
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll

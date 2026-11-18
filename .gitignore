@@ -9,3 +9,14 @@
 *.ilk
 *.exe
 *.dll
+
+# Delphi build and per-machine IDE artifacts
+*.dcu
+*.drc
+*.dres
+*.identcache
+*.local
+*.map
+*.stat
+/source/upstream-30.4/**/Win32/
+/source/upstream-30.4/**/Win64/

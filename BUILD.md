@@ -22,7 +22,7 @@ For a normal installation, place `PortableAppsStart.exe` beside the PortableApps
 
 PAF packages are discovered through `App\AppInfo\appinfo.ini` and launched through their declared `[Control] Start` executable. Other app folders are scanned for EXE files directly inside the folder; nested helper EXEs are not listed. The platform's `AppsHidden` entries are applied to both kinds of applications.
 
-It launches each PAF app using `AppInfo\appinfo.ini` → `[Control] Start`, so PortableApps' own launcher continues to manage per-app data. The main window opens from the tray icon or with `Win+Shift+P`. Installers, updates, backup, and restore remain in the official companion applications.
+It launches each PAF app using `AppInfo\appinfo.ini` → `[Control] Start`, so PortableApps' own launcher continues to manage per-app data. The main window opens from the tray icon or with `Ctrl+Alt+Space`; it hides when it loses foreground activation. Installer, update, backup, and restore actions remain in the official companion applications.
 
 ## Build result on this PC
 

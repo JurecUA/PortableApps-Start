@@ -18,7 +18,9 @@ The compiler target is x64. `native\build` is excluded from Git. Source and buil
 
 ## PortableApps layout
 
-For a normal installation, place `PortableAppsStart.exe` beside the PortableApps companion executables, typically under `PortableApps\PortableApps.com`. The launcher finds the sibling `PortableApps` folder and scans its app folders. It writes its own settings to `Data\PortableAppsStart.ini` beside the EXE.
+For a normal installation, place `PortableAppsStart.exe` beside the PortableApps companion executables, typically under `PortableApps\PortableApps.com`. The launcher finds the sibling `PortableApps` folder and scans app folders there. It reads the platform's `PortableApps.com\Data\PortableAppsMenu.ini` (or a sibling `Data\PortableAppsMenu.ini` when installed beside the platform) to follow hidden-app, favorite, rename, category, and multi-icon preferences. It writes its own settings to `Data\PortableAppsStart.ini` in that same data folder.
+
+PAF packages are discovered through `App\AppInfo\appinfo.ini` and launched through their declared `[Control] Start` executable. Other app folders are scanned for EXE files directly inside the folder; nested helper EXEs are not listed. The platform's `AppsHidden` entries are applied to both kinds of applications.
 
 It launches each app using `AppInfo\appinfo.ini` → `[Control] Start`, so PortableApps' own launcher continues to manage per-app data. Updating and backup buttons call `PortableAppsUpdater.exe`, `PortableAppsBackup.exe`, or `PortableAppsBackupRestore.exe` beside the launcher when those files exist.
 

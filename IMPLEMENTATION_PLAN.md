@@ -1,99 +1,43 @@
-# PortableApps Start — план реализации
+# PortableApps Start — implementation plan
 
-## Цель и зафиксированные решения
+## Direction
 
-Форк PortableApps Platform **30.4** с оболочкой, визуально ориентированной на меню «Пуск» Windows 11. Сначала выполняются аудит исходников и планирование; сборка форка начнётся отдельным следующим этапом. Программа запускается привычным для PortableApps способом и остаётся в системном трее. Это не замена системного меню «Пуск» Windows.
+The project now uses a small native C++17/Win32 launcher instead of compiling or modifying the full Delphi VCL platform. The 30.4 source remains available under `source/upstream-30.4` as a compatibility reference. The target is a quick, portable x64 GUI executable that calls the existing PortableApps launchers and companion tools.
 
-Существующие PortableApps-приложения, их пользовательские данные и штатные операции платформы должны остаться совместимыми. Точные возможности и средства сборки подлежат подтверждению по исходному коду 30.4.
+## First native prototype (0.2.0)
 
-## Этапы
+Implemented in `native/PortableAppsStart.cpp`:
 
-### 0. Получить и исследовать исходники — статический обзор готов
+- Resolve the `PortableApps` directory from the launcher's location.
+- Discover PAF packages through `App/AppInfo/appinfo.ini`; display name/category and app icon.
+- Launch the path named by `[Control] Start` in the app package folder.
+- Search by app name and category; filter by category and favorites.
+- Save favorite state in a launcher-specific INI file next to the application.
+- Provide app context actions to open normally, request elevation, open its folder, and toggle favorite.
+- Stay in the notification area; closing the window hides it. The tray menu can reopen it or exit.
+- Provide shortcuts to install a `.paf.exe`, update applications, back up, restore, and open the apps folder.
+- Enforce one running instance and refresh app discovery on request or after installation.
 
-- Получены и распакованы три официальных исходных архива 30.4; SHA-256 записаны в аудите.
-- Подтверждены Delphi VCL проекты Win32/x86, Start-launcher, NSIS Updater и интеграция с системным треем.
-- По коду найдены форматы для избранного, категорий, скрытия и автозапуска в `Data\\PortableAppsMenu.ini`, а также вызовы updater и backup/restore.
-- Инвентаризировать дерево проекта, языки, проекты сборки, зависимости, ресурсы, локализацию и инструкции.
-- Найти в коде окно, модель списка приложений, запуск, настройки, категории/избранное/скрытие, трей/hotkey, обновление приложений и платформы, архивирование.
-- Собрать неизменённую базовую версию и сохранить результаты в `ARCHITECTURE_AUDIT.md`.
+## Next increments
 
-**Осталось:** уточнить несколько неясных обработчиков и получить контрольную сборку. На текущем компьютере Delphi compiler отсутствует; до сборки не менять поведение приложения.
+1. Try the launcher against a copied real PortableApps installation and correct any layout, Unicode, elevation, installer, or updater differences.
+2. Load each app's own icon, add empty-list/setup guidance, and improve the Start-like layout while keeping the binary compact.
+3. Add configurable hotkeys and auto-start only after preserving expected PortableApps behavior.
+4. Add app rename/hide, category management, ordered favorites, and import/export or migration from `Data/PortableAppsMenu.ini`.
+5. Add a portable distribution folder and verify update/backup delegation against the official companion tools.
+6. Keep the original project notices and clearly identify functions intentionally omitted from the native edition.
 
-### 1. Спроектировать безопасное хранение состояния
+## Compatibility and release checks
 
-- Сопоставить желаемые закрепления и пользовательские категории с существующими форматами настроек.
-- Выбрать совместимое расширение существующего файла или отдельный версионируемый файл настроек.
-- Определить поведение при переносе установки, повреждённом файле, удалении приложения и возврате к оригинальной платформе.
-- Зафиксировать решение до изменения данных пользователя.
+- Run against a disposable copy of a PortableApps drive first.
+- Confirm app discovery for PAF packages with Unicode names and non-ASCII paths.
+- Confirm `[Control] Start` launch behavior and preserve user data across repeated launches.
+- Confirm favorite persistence, category and search filters, tray reopen/exit, and single-instance behavior.
+- Check that `.paf.exe` installation targets the PortableApps folder and refreshes the list when done.
+- Check updater and backup launch only when their companion executable exists.
+- Confirm display scaling and usable layout on a small screen.
+- Compare the executable size and dependencies after release builds.
 
-### 2. Создать основу новой оболочки
+## Known gaps in 0.2.0
 
-- Сохранить штатную инициализацию, обнаружение приложений и запуск.
-- Добавить современное главное окно у правого края экрана с DPI-aware размером, прокруткой и поддержкой изменения разрешения.
-- Встроить собственную иконку: четыре плитки внутри силуэта переносного накопителя; подготовить мастер-графику и размеры для окна/трея.
-- Добавить сетку закреплённых приложений, категории-папки и полный список с подписями.
-- Не включать строку поиска и удалённые из спецификации системные панели.
-
-### 3. Реализовать навигацию и управление списками
-
-- Закрепление/открепление, сохранение порядка закреплений.
-- Пользовательские категории: создать, переименовать, удалить без удаления приложений.
-- Назначение приложений категориям и сортировка перетаскиванием.
-- Полный список по умолчанию; прокрутка, подсказки и доступное контекстное меню.
-- Обработать новые/удалённые приложения и отсутствующие категории без потери остальных настроек.
-
-### 4. Подключить штатные операции
-
-- Восстановить в новой оболочке запуск приложения, запуск с повышением прав, открытие папки, переименование и скрытие/показ.
-- Добавить доступ к проверке обновлений приложений, архивированию и восстановлению через контекстное меню или компактное меню управления.
-- Отдельно отключить обновление самой платформы, только после проверки зависимости updater-а для приложений.
-- Реализовать автозапуск только после выяснения существующего механизма и правил, чтобы избежать повторного старта экземпляров.
-
-### 5. Поведение окна и трея
-
-- Сохранить обычный запуск через PortableApps и поведение в системном трее.
-- Закрытие окна скрывает его, не завершает процесс; повторное открытие — через штатный механизм платформы.
-- Сохранить горячую клавишу, если она реализована, и возможность её настройки — только с подтверждённым API и форматом.
-- Проверить единственный экземпляр и скрытие окна после старта приложения.
-
-### 6. Сборка и проверка
-
-- Повторять сборку после каждого крупного этапа и вести журнал изменений.
-- Сверять оригинальную и новую платформу на копии переносной установки с резервной копией настроек.
-- Проверять матрицу сценариев из спецификации: запуск, права администратора, обнаружение, закрепление, drag-and-drop, категории, скрытие, автозапуск, трей/hotkey, архивирование, обновление приложений, отсутствие автообновления платформы, сохранение настроек, DPI/несколько экранов.
-- Не объявлять неподтверждённые сценарии готовыми; известные ограничения записывать в `CHANGELOG.md`.
-
-## Критерии завершения
-
-- Оригинальные PortableApps запускаются и сохраняют данные.
-- Настройки новой оболочки переживают перезапуск и не ломают исходную структуру приложений.
-- Основные операции Platform доступны из нового интерфейса.
-- Обновления приложений работают отдельно от обновления самой платформы.
-- Есть воспроизводимая инструкция сборки, документация и иконка приложения.
-
-## Что потребуется установить для сборки `.exe`
-
-  Точный комплект нельзя полностью определить до распаковки исходников. SourceForge указывает Delphi как один из языков проекта, а официальный журнал изменений сообщает об обновлении компилятора до Delphi 13.1 начиная с Platform 30.3. Поэтому для базы 30.4 нужен Delphi 13.1; редакцию IDE и дополнительные компоненты ещё нужно проверить по проектам.
-
-  Подтверждённый предварительный минимум:
-
-  - Delphi 13.1 (редакция IDE и компоненты уточняются);
-  - Windows 10/11 x64 и Git;
-- 7-Zip для распаковки `.7z` архивов;
-- фактические компилятор/SDK и сборочная система, найденные в исходниках;
-- используемые проектом библиотеки и ресурсы;
-- для упаковки инсталлятора/portable-релиза — штатный упаковщик и скрипты PortableApps, если они входят в архивы.
-
-  До анализа проектов не выбирайте редакцию Delphi и не устанавливайте отдельный NSIS или Visual Studio наугад. После проверки исходников список будет уточнён до конкретных установочных компонентов и версий.
-
-## Риски и меры
-
-| Риск | Мера |
-|---|---|
-| Не подтверждён исходный код и состав сборки 30.4 | Заблокировать кодовые изменения до получения архивов и проверки хешей |
-| UI тесно связан с обнаружением и запуском | Найти реальные границы компонентов; менять по одному участку и сверять с базовой сборкой |
-| Форматы настроек потеряют совместимость | Сохранить исходные форматы и тестировать обновление/откат на копиях |
-| Отключение обновления платформы затронет обновление приложений | Развести две ветви поведения по фактическим точкам входа |
-| Перетаскивание затруднит запуск или прокрутку | Определить состояния жеста и протестировать мышь, DPI и длинный список |
-| «Стиль Windows 11» повысит нагрузку или нарушит переносимость | Сначала использовать лёгкие средства имеющегося стека, эффекты добавлять выборочно |
-
+The prototype is not a line-for-line port of Platform 30.4 and does not yet implement its complete feature set. It does not import old favorites/settings, auto-start apps, support multiple launcher icons from one package, create/manage categories, reorder items, handle language packs, or implement platform settings. No real PortableApps drive was available for integration validation during the first build.

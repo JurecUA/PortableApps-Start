@@ -1,21 +1,29 @@
-# Сборка PortableApps Start
+# Building PortableApps Start
 
-## Состояние инструкции
+## Requirements
 
-Исходники 30.4 получены и распакованы. Проверка компьютера 18 ноября 2026 года не нашла `dcc32`/`dcc64`, каталоги Embarcadero или RAD Studio в реестре; команда `msbuild` тоже не найдена в PATH. Сборка `.exe` ещё не выполнялась и без Delphi compiler не может начаться.
+- Windows 10 or 11 x64.
+- Visual Studio Build Tools with the **Desktop development with C++** workload, MSVC x64 compiler/linker, Windows SDK, and `vswhere.exe`.
+- PowerShell (included with Windows).
 
-## Что известно
+No Delphi, .NET SDK, NSIS, or third-party C++ library is required for the native launcher. The EXE links the Microsoft runtime statically (`/MT`).
 
-Platform и Start — проекты Delphi VCL с `.dproj`, настроенные на Win32/x86; Start запускает `PortableAppsPlatform.exe` в структуре PortableApps. Updater 30.4 собирается из NSIS `.nsi` с локальными `.nsh`. Для исходного 30.4 журнал обновлений указывает Delphi 13.1. В RAD Studio 13.1 официальный feature matrix относит Delphi Win32 compiler/toolchain к Professional и старшим редакциям; Community в матрице указана только для Delphi 12.1. Точная совместимость пакетов проекта требует контрольной сборки.
+## Build
 
-## Что установить сейчас
+Run `native\build.bat`. The script generates the multi-size ICO from the project artwork, initializes the latest installed MSVC toolchain, compiles the icon/version resource, and writes:
 
-- Embarcadero RAD Studio / Delphi 13.1 Professional или старше, с Delphi Win32 compiler (DCC32), VCL и MSBuild. До покупки/установки проверить у Embarcadero доступность подходящей лицензии и компонентов для проекта.
-- Git для истории версий (уже установлен в текущей среде).
-- 7-Zip только если понадобится заново распаковывать `.7z` (текущие архивы уже распакованы).
-- NSIS нужен только для пересборки Updater из предоставленного сценария.
+`native\build\PortableAppsStart.exe`
 
-Visual Studio не заменяет Delphi compiler; отдельная установка Visual Studio по исходным проектам не требуется. На текущем компьютере не обнаружены Delphi, MSBuild и NSIS в PATH/стандартных каталогах. Поэтому EXE сейчас собрать нельзя. Когда RAD Studio будет установлена, сначала открыть Platform `.dproj`, собрать Release/Win32 и устранить отсутствующие Delphi packages; затем отдельно собрать Start. NSIS понадобится только для сборки Updater.
+The compiler target is x64. `native\build` is excluded from Git. Source and build script are in `native`.
 
-Официальные справочные материалы: [матрица возможностей RAD Studio 13.1](https://www.embarcadero.com/docs/rad-studio-feature-matrix.pdf) и [документация Delphi Compiler](https://docwiki.embarcadero.com/RADStudio/Florence/en/Delphi_Compiler).
+## PortableApps layout
 
+For a normal installation, place `PortableAppsStart.exe` beside the PortableApps companion executables, typically under `PortableApps\PortableApps.com`. The launcher finds the sibling `PortableApps` folder and scans its app folders. It writes its own settings to `Data\PortableAppsStart.ini` beside the EXE.
+
+It launches each app using `AppInfo\appinfo.ini` → `[Control] Start`, so PortableApps' own launcher continues to manage per-app data. Updating and backup buttons call `PortableAppsUpdater.exe`, `PortableAppsBackup.exe`, or `PortableAppsBackupRestore.exe` beside the launcher when those files exist.
+
+The Add button runs a selected `.paf.exe` with PortableApps silent install arguments and the detected `PortableApps` directory as its destination. Confirm the destination shown by the installer when using this prototype with an existing installation.
+
+## Build result on this PC
+
+Built with Visual Studio Build Tools 18.11 and Windows SDK 10.0.26100. The result is a native x64 Windows GUI executable with the application icon embedded. No Delphi installer or license activation was needed. The code has been compiled; this does not certify runtime behavior against every PortableApps installation.

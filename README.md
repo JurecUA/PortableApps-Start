@@ -2,7 +2,7 @@
 
 Compact Windows launcher for PortableApps.com installations. The native launcher is written in C++17 and Win32; it does not require Delphi or a separate .NET runtime.
 
-## Current version: 0.2.0
+## Current version: 0.2.1
 
 This is the first native C++ prototype, built as a standalone x64 EXE. The 30.4 Delphi source archives remain in `source/upstream-30.4` as reference material. This prototype replaces the launcher UI and its core app discovery/launch path; it does not port the complete Platform or Updater codebase.
 
@@ -12,7 +12,7 @@ This is the first native C++ prototype, built as a standalone x64 EXE. The 30.4 
 - Starts each app through the PAF launcher named by `[Control] Start`, preserving PortableApps data handling.
 - Search, category filtering, favorite toggles, app icons, and an app context menu.
 - System tray, hide-on-close, single-instance behavior, and a four-tile portable-drive icon.
-- PAF installer selection and drag-and-drop; invokes the standard PortableApps silent install arguments.
+- PAF installer selection and drag-and-drop; accepts `.paf.exe` packages only and refreshes after the installer exits.
 - Opens installed PortableApps updater, backup, and restore utilities when present beside this launcher.
 - Stores favorites in `Data/PortableAppsStart.ini` beside the launcher.
 

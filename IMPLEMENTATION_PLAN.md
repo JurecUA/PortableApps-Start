@@ -4,7 +4,7 @@
 
 The project now uses a small native C++17/Win32 launcher instead of compiling or modifying the full Delphi VCL platform. The 30.4 source remains available under `source/upstream-30.4` as a compatibility reference. The target is a quick, portable x64 GUI executable that calls the existing PortableApps launchers and companion tools.
 
-## First native prototype (0.2.0)
+## First native prototype (0.2.1)
 
 Implemented in `native/PortableAppsStart.cpp`:
 
@@ -16,6 +16,7 @@ Implemented in `native/PortableAppsStart.cpp`:
 - Provide app context actions to open normally, request elevation, open its folder, and toggle favorite.
 - Stay in the notification area; closing the window hides it. The tray menu can reopen it or exit.
 - Provide shortcuts to install a `.paf.exe`, update applications, back up, restore, and open the apps folder.
+- Accept only `.paf.exe` installers and refresh discovery when the installer process exits.
 - Enforce one running instance and refresh app discovery on request or after installation.
 
 ## Next increments

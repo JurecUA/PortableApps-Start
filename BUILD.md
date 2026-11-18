@@ -22,7 +22,7 @@ For a normal installation, place `PortableAppsStart.exe` beside the PortableApps
 
 It launches each app using `AppInfo\appinfo.ini` → `[Control] Start`, so PortableApps' own launcher continues to manage per-app data. Updating and backup buttons call `PortableAppsUpdater.exe`, `PortableAppsBackup.exe`, or `PortableAppsBackupRestore.exe` beside the launcher when those files exist.
 
-The Add button runs a selected `.paf.exe` with PortableApps silent install arguments and the detected `PortableApps` directory as its destination. Confirm the destination shown by the installer when using this prototype with an existing installation.
+The Add button runs a selected `.paf.exe` with PortableApps silent install arguments and the detected `PortableApps` directory as its destination. Confirm the destination shown by the installer when using this prototype with an existing installation. The app list refreshes after the installer process exits.
 
 ## Build result on this PC
 

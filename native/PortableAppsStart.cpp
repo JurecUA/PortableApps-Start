@@ -44,6 +44,7 @@ std::vector<App> g_apps; std::vector<std::wstring> g_categories;
 fs::path g_moduleDir, g_appsDir, g_dataDir, g_iniPath;
 bool g_showFavorites = false, g_refreshing = false;
 HFONT g_font{}, g_smallFont{};
+HANDLE g_installerProcess{};
 
 std::wstring trim(std::wstring s) {
     auto ws = [](wchar_t c) { return std::iswspace(c) != 0; };
@@ -186,17 +187,22 @@ void launchSibling(const wchar_t* exe,const wchar_t* args=nullptr) {
     fs::path p=g_moduleDir/exe; if(!fs::is_regular_file(p)) { MessageBoxW(g_window,(std::wstring(L"Не найден файл ")+p.wstring()).c_str(),L"PortableApps Start",MB_ICONINFORMATION); return; }
     ShellExecuteW(g_window,L"open",p.c_str(),args,nullptr,SW_SHOWNORMAL);
 }
+bool isPafInstaller(const fs::path& p) {
+    const auto ext=lower(p.extension().wstring()), stem=lower(p.stem().wstring());
+    return ext==L".exe" && stem.size()>=4 && stem.substr(stem.size()-4)==L".paf";
+}
 void installPaf(const std::wstring& file) {
+    if(!isPafInstaller(fs::path(file))) { MessageBoxW(g_window,L"Выберите установщик PortableApps с расширением .paf.exe.",L"PortableApps Start",MB_ICONINFORMATION); return; }
     const auto destination=g_appsDir.wstring()+L"\\";
     std::wstring args=L"-o\""+destination+L"\" -y -/SILENT=YES /DESTINATION=\""+destination+L"\"";
-    SHELLEXECUTEINFOW si{};si.cbSize=sizeof(si);si.fMask=SEE_MASK_FLAG_NO_UI;si.hwnd=g_window;si.lpVerb=L"open";
+    SHELLEXECUTEINFOW si{};si.cbSize=sizeof(si);si.fMask=SEE_MASK_FLAG_NO_UI|SEE_MASK_NOCLOSEPROCESS;si.hwnd=g_window;si.lpVerb=L"open";
     si.lpFile=file.c_str();si.lpParameters=args.c_str();si.lpDirectory=fs::path(file).parent_path().c_str();si.nShow=SW_SHOWNORMAL;
-    if(ShellExecuteExW(&si)) SetTimer(g_window,1,2500,nullptr);
+    if(ShellExecuteExW(&si)) { g_installerProcess=si.hProcess; SetTimer(g_window,1,500,nullptr); }
     else MessageBoxW(g_window,L"Не удалось запустить установщик .paf.exe.",L"PortableApps Start",MB_ICONERROR);
 }
 void choosePaf() {
     wchar_t path[32768]{}; OPENFILENAMEW ofn{};ofn.lStructSize=sizeof(ofn);ofn.hwndOwner=g_window;ofn.lpstrFile=path;ofn.nMaxFile=32768;
-    ofn.lpstrFilter=L"PortableApps installers (*.paf.exe)\0*.paf.exe\0Executable files (*.exe)\0*.exe\0All files\0*.*\0";ofn.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST;
+    ofn.lpstrFilter=L"PortableApps installers (*.paf.exe)\0*.paf.exe\0All files\0*.*\0";ofn.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST;
     if(GetOpenFileNameW(&ofn)) installPaf(path);
 }
 void openRoot() { ShellExecuteW(g_window,L"explore",g_appsDir.c_str(),nullptr,nullptr,SW_SHOWNORMAL); }
@@ -260,10 +266,12 @@ LRESULT CALLBACK WndProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
     case WM_TRAY:
         if(LOWORD(lp)==WM_LBUTTONUP||LOWORD(lp)==NIN_SELECT||LOWORD(lp)==NIN_KEYSELECT){if(IsWindowVisible(w))ShowWindow(w,SW_HIDE);else{ShowWindow(w,SW_SHOW);SetForegroundWindow(w);}}
         else if(LOWORD(lp)==WM_RBUTTONUP||LOWORD(lp)==WM_CONTEXTMENU)showTrayMenu();return 0;
-    case WM_DROPFILES:{HDROP d=(HDROP)wp;wchar_t p[32768]{};if(DragQueryFileW(d,0,p,32768)){auto ext=lower(fs::path(p).extension().wstring());auto stem=lower(fs::path(p).stem().wstring());if(ext==L".exe"&&stem.size()>=4&&stem.substr(stem.size()-4)==L".paf")installPaf(p);}DragFinish(d);return 0;}
-    case WM_TIMER:KillTimer(w,1);refreshList();return 0;
+    case WM_DROPFILES:{HDROP d=(HDROP)wp;wchar_t p[32768]{};if(DragQueryFileW(d,0,p,32768)&&isPafInstaller(fs::path(p)))installPaf(p);DragFinish(d);return 0;}
+    case WM_TIMER:
+        if(g_installerProcess&&WaitForSingleObject(g_installerProcess,0)==WAIT_TIMEOUT)return 0;
+        KillTimer(w,1);if(g_installerProcess){CloseHandle(g_installerProcess);g_installerProcess=nullptr;}refreshList();return 0;
     case WM_CLOSE:ShowWindow(w,SW_HIDE);return 0;
-    case WM_DESTROY:Shell_NotifyIconW(NIM_DELETE,&g_nid);PostQuitMessage(0);return 0;
+    case WM_DESTROY:Shell_NotifyIconW(NIM_DELETE,&g_nid);if(g_installerProcess){CloseHandle(g_installerProcess);g_installerProcess=nullptr;}PostQuitMessage(0);return 0;
     }
     return DefWindowProcW(w,msg,wp,lp);
 }

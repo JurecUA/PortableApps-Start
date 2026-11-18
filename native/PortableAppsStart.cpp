@@ -8,6 +8,7 @@
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <dwmapi.h>
+#include <winver.h>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -16,6 +17,7 @@
 #include <sstream>
 #include <cwctype>
 #include <cstring>
+#include <cwchar>
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -24,6 +26,7 @@
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "version.lib")
 
 namespace fs = std::filesystem;
 namespace {
@@ -35,16 +38,20 @@ constexpr int ID_OPEN = 1101, ID_RUN_ADMIN = 1102, ID_FOLDER = 1103, ID_FAVORITE
 constexpr UINT ID_TRAY_OPEN = 2001, ID_TRAY_REFRESH = 2002, ID_TRAY_UPDATE = 2003;
 constexpr UINT ID_TRAY_INSTALL = 2004, ID_TRAY_BACKUP = 2005, ID_TRAY_RESTORE = 2006;
 constexpr UINT ID_TRAY_ROOT = 2007, ID_TRAY_EXIT = 2008;
+constexpr UINT_PTR TIMER_TRAY_RETRY = 2;
 constexpr wchar_t kClassName[] = L"PortableAppsStartNativeWindow";
-struct App { std::wstring folder, name, category, launcher, icon; bool favorite = false; };
+struct App { std::wstring folder, relativeKey, configKey, name, category, launcher, icon; bool favorite = false; };
 
 HINSTANCE g_instance{}; HWND g_window{}, g_search{}, g_category{}, g_list{};
 HIMAGELIST g_images{}; HICON g_icon{}; NOTIFYICONDATAW g_nid{};
 std::vector<App> g_apps; std::vector<std::wstring> g_categories;
 fs::path g_moduleDir, g_appsDir, g_dataDir, g_iniPath;
+fs::path g_legacyIniPath;
+std::wstring g_legacyIniText;
 bool g_showFavorites = false, g_refreshing = false;
 HFONT g_font{}, g_smallFont{};
 HANDLE g_installerProcess{};
+UINT g_taskbarCreated{};
 
 std::wstring trim(std::wstring s) {
     auto ws = [](wchar_t c) { return std::iswspace(c) != 0; };
@@ -79,6 +86,16 @@ std::wstring ini(const std::wstring& text, const std::wstring& section, const st
     }
     return fallback;
 }
+bool hasIniKey(const std::wstring& text, const std::wstring& section, const std::wstring& key) {
+    std::wistringstream in(text); std::wstring line, current; const auto wantSection=lower(section), wantKey=lower(key);
+    while(std::getline(in,line)) {
+        line=trim(line); if(line.empty()||line[0]==L';'||line[0]==L'#')continue;
+        if(line.front()==L'['&&line.back()==L']'){current=lower(trim(line.substr(1,line.size()-2)));continue;}
+        if(current!=wantSection)continue;auto eq=line.find(L'=');if(eq==std::wstring::npos)continue;
+        if(lower(trim(line.substr(0,eq)))==wantKey)return true;
+    }
+    return false;
+}
 bool isTrue(const std::wstring& v) { auto x=lower(trim(v)); return x==L"true" || x==L"1" || x==L"yes"; }
 bool existsDir(const fs::path& p) { std::error_code e; return fs::is_directory(p, e); }
 fs::path findAppsRoot() {
@@ -94,7 +111,12 @@ fs::path findAppsRoot() {
 }
 void setPaths() {
     wchar_t path[32768]{}; GetModuleFileNameW(nullptr, path, 32768); g_moduleDir=fs::path(path).parent_path();
-    g_appsDir=findAppsRoot(); g_dataDir=g_moduleDir/L"Data"; g_iniPath=g_dataDir/L"PortableAppsStart.ini";
+    g_appsDir=findAppsRoot();
+    if(fs::is_regular_file(g_moduleDir/L"Data"/L"PortableAppsMenu.ini"))g_dataDir=g_moduleDir/L"Data";
+    else if(existsDir(g_appsDir/L"PortableApps.com"/L"Data"))g_dataDir=g_appsDir/L"PortableApps.com"/L"Data";
+    else g_dataDir=g_moduleDir/L"Data";
+    g_iniPath=g_dataDir/L"PortableAppsStart.ini";
+    g_legacyIniPath=g_dataDir/L"PortableAppsMenu.ini"; g_legacyIniText=readText(g_legacyIniPath);
     std::error_code e; fs::create_directories(g_dataDir, e);
 }
 HICON makeIcon(int size) {
@@ -110,8 +132,32 @@ HICON makeIcon(int size) {
     HICON icon=CreateIconIndirect(&ii); DeleteObject(color); DeleteObject(mask); return icon;
 }
 void saveFavorite(const App& app) {
-    WritePrivateProfileStringW(L"Favorites",app.folder.c_str(),app.favorite?L"true":L"false",g_iniPath.c_str());
+    WritePrivateProfileStringW(L"Favorites",app.configKey.c_str(),app.favorite?L"true":L"false",g_iniPath.c_str());
 }
+std::wstring fileVersionString(const fs::path& path,const wchar_t* field) {
+    DWORD ignored=0;DWORD size=GetFileVersionInfoSizeW(path.c_str(),&ignored);if(!size)return L"";
+    std::vector<BYTE> data(size);if(!GetFileVersionInfoW(path.c_str(),0,size,data.data()))return L"";
+    struct LangCodePage { WORD language, codePage; };
+    LangCodePage* translations=nullptr;UINT count=0;
+    if(VerQueryValueW(data.data(),L"\\VarFileInfo\\Translation",(void**)&translations,&count)&&count>=sizeof(LangCodePage)) {
+        for(UINT i=0;i<count/sizeof(LangCodePage);++i) {
+            wchar_t query[96]{};swprintf_s(query,L"\\StringFileInfo\\%04x%04x\\%s",translations[i].language,translations[i].codePage,field);
+            wchar_t* value=nullptr;UINT chars=0;if(VerQueryValueW(data.data(),query,(void**)&value,&chars)&&value&&chars>1)return trim(value);
+        }
+    }
+    wchar_t* value=nullptr;UINT chars=0;wchar_t query[96]{};
+    swprintf_s(query,L"\\StringFileInfo\\040904B0\\%s",field);
+    if(VerQueryValueW(data.data(),query,(void**)&value,&chars)&&value&&chars>1)return trim(value);
+    return L"";
+}
+std::wstring appDisplayName(const fs::path& exe) {
+    auto name=fileVersionString(exe,L"ProductName");if(name.empty())name=fileVersionString(exe,L"FileDescription");
+    if(name.empty())name=exe.stem().wstring();return name;
+}
+bool isHiddenByPlatform(const std::wstring& key) { return hasIniKey(g_legacyIniText,L"AppsHidden",lower(key)); }
+bool platformFavorite(const std::wstring& key) { return isTrue(ini(g_legacyIniText,L"AppsFavorite",lower(key),L"false")); }
+std::wstring platformName(const std::wstring& key,const std::wstring& fallback) { return ini(g_legacyIniText,L"AppsRenamed",lower(key),fallback); }
+std::wstring platformCategory(const std::wstring& key,const std::wstring& fallback) { return ini(g_legacyIniText,L"AppsRecategorized",lower(key),fallback); }
 void loadApps() {
     g_apps.clear(); g_categories.clear(); g_showFavorites = false;
     if (!existsDir(g_appsDir)) return;
@@ -119,14 +165,38 @@ void loadApps() {
     for (fs::directory_iterator it(g_appsDir,ec), end; !ec && it!=end; it.increment(ec)) {
         if (!it->is_directory(ec)) continue;
         const auto folder=it->path().filename().wstring(); if (lower(folder)==L"portableapps.com") continue;
-        fs::path appInfo=it->path()/L"App"/L"AppInfo"/L"appinfo.ini"; if (!fs::is_regular_file(appInfo,ec)) continue;
-        const auto txt=readText(appInfo); auto name=ini(txt,L"Details",L"Name"); auto start=ini(txt,L"Control",L"Start");
-        if (name.empty() || start.empty()) continue;
-        fs::path launcher=it->path()/start; if (!fs::is_regular_file(launcher,ec)) continue;
-        App a; a.folder=folder; a.name=name; a.category=ini(txt,L"Details",L"Category",L"Other");
-        a.launcher=launcher.wstring(); a.icon=(it->path()/L"App"/L"AppInfo"/L"appicon.ico").wstring();
-        a.favorite=isTrue(ini(readText(g_iniPath),L"Favorites",folder,L"false"));
-        g_apps.push_back(std::move(a));
+        fs::path appInfo=it->path()/L"App"/L"AppInfo"/L"appinfo.ini";
+        if(fs::is_regular_file(appInfo,ec)) {
+            const auto txt=readText(appInfo); const auto appName=ini(txt,L"Details",L"Name");
+            int iconCount=1;try{iconCount=(std::max)(1,std::stoi(ini(txt,L"Control",L"Icons",L"1")));}catch(...){}
+            const bool singleIcon=isTrue(ini(g_legacyIniText,L"DisplayOptions",L"ShowSingleIconForMultiIconApps",L"true"));
+            const int count=(iconCount>1&&!singleIcon)?iconCount:1;
+            for(int iconNo=1;iconNo<=count;++iconNo) {
+                const auto startKey=(iconCount>1&&!singleIcon)?L"Start"+std::to_wstring(iconNo):L"Start";
+                const auto start=ini(txt,L"Control",startKey);if(start.empty())continue;
+                fs::path launcher=it->path()/start;if(!fs::is_regular_file(launcher,ec))continue;
+                const auto relKey=folder+L"\\"+fs::path(start).filename().wstring();if(isHiddenByPlatform(relKey))continue;
+                App a;a.folder=folder;a.relativeKey=relKey;a.configKey=folder;
+                a.name=(iconCount>1&&!singleIcon)?ini(txt,L"Control",L"Name"+std::to_wstring(iconNo),appName):appName;
+                if(a.name.empty())a.name=launcher.stem().wstring();
+                a.name=platformName(relKey,a.name);a.category=platformCategory(relKey,ini(txt,L"Details",L"Category",L"Other"));
+                a.launcher=launcher.wstring();const auto iconPath=ini(txt,L"Control",L"ExtractIcon");
+                a.icon=!iconPath.empty()?(it->path()/iconPath).wstring():(it->path()/L"App"/L"AppInfo"/(iconCount>1&&!singleIcon?L"appicon"+std::to_wstring(iconNo)+L".ico":L"appicon.ico")).wstring();
+                const auto own=ini(readText(g_iniPath),L"Favorites",a.configKey,L"__missing__");a.favorite=own==L"__missing__"?platformFavorite(relKey):isTrue(own);
+                g_apps.push_back(std::move(a));
+            }
+            continue;
+        }
+        // Match Platform 30.4's legacy-app rule: scan only EXEs directly inside
+        // each app folder; ignore the uninstaller and names hidden in the menu INI.
+        for(fs::directory_iterator ex(it->path(),ec),exEnd;!ec&&ex!=exEnd;ex.increment(ec)) {
+            if(!ex->is_regular_file(ec)||lower(ex->path().extension().wstring())!=L".exe"||lower(ex->path().filename().wstring())==L"uninstall.exe")continue;
+            const auto relKey=folder+L"\\"+ex->path().filename().wstring();if(isHiddenByPlatform(relKey))continue;
+            App a;a.folder=folder;a.relativeKey=relKey;a.configKey=relKey;a.launcher=ex->path().wstring();a.icon=L"";
+            a.name=platformName(relKey,appDisplayName(ex->path()));a.category=platformCategory(relKey,L"Other");
+            const auto own=ini(readText(g_iniPath),L"Favorites",a.configKey,L"__missing__");a.favorite=own==L"__missing__"?platformFavorite(relKey):isTrue(own);
+            g_apps.push_back(std::move(a));
+        }
     }
     std::sort(g_apps.begin(),g_apps.end(),[](const App& a,const App& b){return lower(a.name)<lower(b.name);});
     for (const auto& a:g_apps) if (std::find(g_categories.begin(),g_categories.end(),a.category)==g_categories.end()) g_categories.push_back(a.category);
@@ -224,9 +294,12 @@ void showTrayMenu() {
     POINT p{};GetCursorPos(&p);SetForegroundWindow(g_window);UINT c=TrackPopupMenu(m,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,g_window,nullptr);DestroyMenu(m);
     if(c==ID_TRAY_OPEN){ShowWindow(g_window,SW_SHOW);SetForegroundWindow(g_window);}else if(c==ID_TRAY_REFRESH)refreshList();else if(c==ID_TRAY_INSTALL)choosePaf();else if(c==ID_TRAY_UPDATE)launchSibling(L"PortableAppsUpdater.exe",L"/MODE=UPDATE");else if(c==ID_TRAY_BACKUP)launchSibling(L"PortableAppsBackup.exe");else if(c==ID_TRAY_RESTORE)launchSibling(L"PortableAppsBackupRestore.exe");else if(c==ID_TRAY_ROOT)openRoot();else if(c==ID_TRAY_EXIT)DestroyWindow(g_window);
 }
-void addTray() {
+bool addTray(HWND owner) {
+    if(owner)g_window=owner;
     g_nid={};g_nid.cbSize=sizeof(g_nid);g_nid.hWnd=g_window;g_nid.uID=1;g_nid.uFlags=NIF_MESSAGE|NIF_ICON|NIF_TIP;g_nid.uCallbackMessage=WM_TRAY;g_nid.hIcon=g_icon;
-    wcscpy_s(g_nid.szTip,L"PortableApps Start");Shell_NotifyIconW(NIM_ADD,&g_nid);g_nid.uVersion=NOTIFYICON_VERSION_4;Shell_NotifyIconW(NIM_SETVERSION,&g_nid);
+    wcscpy_s(g_nid.szTip,L"PortableApps Start");
+    if(!Shell_NotifyIconW(NIM_ADD,&g_nid)){SetTimer(g_window,TIMER_TRAY_RETRY,1500,nullptr);return false;}
+    g_nid.uVersion=NOTIFYICON_VERSION_4;Shell_NotifyIconW(NIM_SETVERSION,&g_nid);return true;
 }
 HWND button(HWND parent,const wchar_t* text,int id) { return CreateWindowExW(0,L"BUTTON",text,WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,0,0,0,0,parent,(HMENU)(INT_PTR)id,g_instance,nullptr); }
 void createControls(HWND w) {
@@ -245,9 +318,11 @@ void createControls(HWND w) {
     for(int id:ids)SendMessageW(GetDlgItem(w,id),WM_SETFONT,(WPARAM)g_smallFont,TRUE);
 }
 LRESULT CALLBACK WndProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
+    if(g_taskbarCreated&&msg==g_taskbarCreated){addTray(w);return 0;}
     switch(msg) {
-    case WM_CREATE: createControls(w);addTray();refreshList();DragAcceptFiles(w,TRUE);return 0;
-    case WM_SIZE: layout(LOWORD(lp),HIWORD(lp));return 0;
+    case WM_NCCREATE:g_window=w;return DefWindowProcW(w,msg,wp,lp);
+    case WM_CREATE: g_window=w;createControls(w);addTray(w);refreshList();DragAcceptFiles(w,TRUE);return 0;
+    case WM_SIZE: if(wp==SIZE_MINIMIZED){ShowWindow(w,SW_HIDE);return 0;}layout(LOWORD(lp),HIWORD(lp));return 0;
     case WM_COMMAND:
         switch(LOWORD(wp)) {
         case ID_SEARCH:if(HIWORD(wp)==EN_CHANGE)refreshList();return 0;
@@ -268,6 +343,7 @@ LRESULT CALLBACK WndProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
         else if(LOWORD(lp)==WM_RBUTTONUP||LOWORD(lp)==WM_CONTEXTMENU)showTrayMenu();return 0;
     case WM_DROPFILES:{HDROP d=(HDROP)wp;wchar_t p[32768]{};if(DragQueryFileW(d,0,p,32768)&&isPafInstaller(fs::path(p)))installPaf(p);DragFinish(d);return 0;}
     case WM_TIMER:
+        if(wp==TIMER_TRAY_RETRY){KillTimer(w,TIMER_TRAY_RETRY);addTray(w);return 0;}
         if(g_installerProcess&&WaitForSingleObject(g_installerProcess,0)==WAIT_TIMEOUT)return 0;
         KillTimer(w,1);if(g_installerProcess){CloseHandle(g_installerProcess);g_installerProcess=nullptr;}refreshList();return 0;
     case WM_CLOSE:ShowWindow(w,SW_HIDE);return 0;
@@ -277,12 +353,12 @@ LRESULT CALLBACK WndProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
 }
 }
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int) {
-    g_instance=instance;SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);setPaths();
+    g_instance=instance;SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);g_taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");setPaths();
     HANDLE mutex=CreateMutexW(nullptr,TRUE,L"Local\\PortableAppsStartNative_v1");if(mutex&&GetLastError()==ERROR_ALREADY_EXISTS){HWND old=FindWindowW(kClassName,nullptr);if(old){ShowWindow(old,SW_SHOW);SetForegroundWindow(old);}CloseHandle(mutex);return 0;}
     INITCOMMONCONTROLSEX cc{sizeof(cc),ICC_LISTVIEW_CLASSES|ICC_STANDARD_CLASSES};InitCommonControlsEx(&cc);g_icon=makeIcon(32);
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=instance;wc.lpfnWndProc=WndProc;wc.lpszClassName=kClassName;wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);wc.hIcon=g_icon;wc.hIconSm=g_icon;wc.hbrBackground=(HBRUSH)(COLOR_WINDOW+1);RegisterClassExW(&wc);
     const int width=620,height=650;int x=GetSystemMetrics(SM_CXSCREEN)-width-24,y=GetSystemMetrics(SM_CYSCREEN)-height-64;
-    g_window=CreateWindowExW(WS_EX_APPWINDOW,kClassName,L"PortableApps Start",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,x,y,width,height,nullptr,nullptr,instance,nullptr);
+    g_window=CreateWindowExW(WS_EX_TOOLWINDOW,kClassName,L"PortableApps Start",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,x,y,width,height,nullptr,nullptr,instance,nullptr);
     if(!g_window)return 1;ShowWindow(g_window,SW_SHOW);UpdateWindow(g_window);
     MSG msg;while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}
     if(g_images)ImageList_Destroy(g_images);if(g_icon)DestroyIcon(g_icon);if(g_font)DeleteObject(g_font);if(g_smallFont)DeleteObject(g_smallFont);if(mutex)CloseHandle(mutex);return (int)msg.wParam;

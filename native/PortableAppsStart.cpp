@@ -48,7 +48,7 @@ constexpr wchar_t kRunValue[] = L"PortableAppsStart";
 constexpr wchar_t kCategoryAll[] = L"@all", kCategoryHidden[] = L"@hidden";
 struct App { std::wstring folder, relativeKey, configKey, legacyConfigKey, name, category, launcher, iconPath; HICON icon{}; int iconWidth=32,iconHeight=32; unsigned long long launchCount=0; bool favorite = false, autoStart = false, hidden = false; };
 struct TileHit { RECT rect{}; int appIndex=-1; };
-struct MenuDrawInfo { std::wstring text; };
+struct MenuDrawInfo { std::wstring text; bool hasSubmenu=false; };
 
 HINSTANCE g_instance{}; HWND g_window{};
 HICON g_icon{}; NOTIFYICONDATAW g_nid{};
@@ -369,11 +369,12 @@ void paintLauncher(HWND w,HDC dc) {
     const int cellW=(inner-4*gap)/5;auto pins=pinnedApps();auto apps=visibleApps();const int pinRows=(int)((pins.size()+4)/5);
     const int pinnedSection=scaleFor(w,30)+(std::max)(1,pinRows)*cellH+scaleFor(w,14);
     const int appTitleY=contentTop+pinnedSection-g_scrollY;
-    g_categoryRect={client.right-pad-scaleFor(w,190),appTitleY,client.right-pad,appTitleY+scaleFor(w,34)};
+    const int categoryWidth=scaleFor(w,190),categoryHeight=scaleFor(w,34);
+    g_categoryRect={(client.right-categoryWidth)/2,appTitleY,(client.right+categoryWidth)/2,appTitleY+categoryHeight};
     HBRUSH cb=CreateSolidBrush(RGB(47,51,58));auto ob=(HBRUSH)SelectObject(dc,cb);auto op=(HPEN)SelectObject(dc,GetStockObject(NULL_PEN));
     RoundRect(dc,g_categoryRect.left,g_categoryRect.top,g_categoryRect.right,g_categoryRect.bottom,scaleFor(w,10),scaleFor(w,10));SelectObject(dc,ob);SelectObject(dc,op);DeleteObject(cb);
     SetTextColor(dc,RGB(236,238,242));SelectObject(dc,g_smallFont);RECT ct=g_categoryRect;ct.left+=scaleFor(w,12);ct.right-=scaleFor(w,12);
-    std::wstring catLabel=currentCategoryLabel()+L"   ▾";DrawTextW(dc,catLabel.c_str(),-1,&ct,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+    std::wstring catLabel=currentCategoryLabel()+L"   ▾";DrawTextW(dc,catLabel.c_str(),-1,&ct,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
     const int appGridY=appTitleY+scaleFor(w,36);
     g_contentHeight=pinnedSection+scaleFor(w,42)+(int)((apps.size()+4)/5)*cellH+scaleFor(w,20);
     const int viewport=client.bottom-contentTop-scaleFor(w,8);g_scrollViewport=viewport;g_scrollMaximum=(std::max)(0,g_contentHeight-viewport);g_scrollY=std::clamp(g_scrollY,0,g_scrollMaximum);
@@ -463,8 +464,8 @@ void setDarkMenu(HMENU menu) {
     if(!g_menuBackgroundBrush)g_menuBackgroundBrush=CreateSolidBrush(RGB(42,42,42));
     MENUINFO mi{};mi.cbSize=sizeof(mi);mi.fMask=MIM_BACKGROUND;mi.hbrBack=g_menuBackgroundBrush;SetMenuInfo(menu,&mi);
 }
-MenuDrawInfo* makeMenuDrawInfo(const std::wstring& text) {
-    auto info=std::make_unique<MenuDrawInfo>();info->text=text;auto* raw=info.get();g_menuDrawStorage.push_back(std::move(info));return raw;
+MenuDrawInfo* makeMenuDrawInfo(const std::wstring& text,bool hasSubmenu=false) {
+    auto info=std::make_unique<MenuDrawInfo>();info->text=text;info->hasSubmenu=hasSubmenu;auto* raw=info.get();g_menuDrawStorage.push_back(std::move(info));return raw;
 }
 MenuDrawInfo* findMenuDrawInfo(ULONG_PTR data) {
     for(const auto& info:g_menuDrawStorage)if(info.get()==reinterpret_cast<MenuDrawInfo*>(data))return info.get();
@@ -474,11 +475,11 @@ void appendDarkMenuItem(HMENU menu,UINT id,const std::wstring& text,bool checked
     MENUITEMINFOW item{};item.cbSize=sizeof(item);item.fMask=MIIM_FTYPE|MIIM_ID|MIIM_DATA|MIIM_STATE;item.fType=MFT_OWNERDRAW;item.fState=(checked?MFS_CHECKED:0)|(disabled?MFS_DISABLED:0);item.wID=id;item.dwItemData=(ULONG_PTR)makeMenuDrawInfo(text);InsertMenuItemW(menu,(UINT)GetMenuItemCount(menu),TRUE,&item);
 }
 void appendDarkSubmenu(HMENU menu,HMENU submenu,const std::wstring& text) {
-    setDarkMenu(submenu);MENUITEMINFOW item{};item.cbSize=sizeof(item);item.fMask=MIIM_FTYPE|MIIM_DATA|MIIM_SUBMENU;item.fType=MFT_OWNERDRAW;item.dwItemData=(ULONG_PTR)makeMenuDrawInfo(text);item.hSubMenu=submenu;InsertMenuItemW(menu,(UINT)GetMenuItemCount(menu),TRUE,&item);
+    setDarkMenu(submenu);MENUITEMINFOW item{};item.cbSize=sizeof(item);item.fMask=MIIM_FTYPE|MIIM_DATA|MIIM_SUBMENU;item.fType=MFT_OWNERDRAW;item.dwItemData=(ULONG_PTR)makeMenuDrawInfo(text,true);item.hSubMenu=submenu;InsertMenuItemW(menu,(UINT)GetMenuItemCount(menu),TRUE,&item);
 }
-UINT trackDarkMenu(HMENU menu,POINT position) {
+UINT trackDarkMenu(HMENU menu,POINT position,UINT alignment=0) {
     SetForegroundWindow(g_window);
-    const UINT command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON|TPM_NONOTIFY,position.x,position.y,0,g_window,nullptr);
+    const UINT command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON|TPM_NONOTIFY|alignment,position.x,position.y,0,g_window,nullptr);
     // Required for tray-owned popups so Windows completes menu dismissal and
     // returns the owner window to its normal message state.
     PostMessageW(g_window,WM_NULL,0,0);
@@ -490,7 +491,7 @@ void showCategoryMenu() {
     appendDarkMenuItem(menu,ID_CATEGORY_HIDDEN,L"Скрытые приложения",g_currentCategory==kCategoryHidden);
     for(size_t i=0;i<g_categories.size()&&i<800;++i)appendDarkMenuItem(menu,ID_CATEGORY_BASE+(UINT)i,g_categories[i],g_currentCategory==g_categories[i]);
     appendDarkMenuItem(menu,ID_CONTEXT_NEW_CATEGORY,L"Создать категорию…");
-    POINT p{g_categoryRect.left,g_categoryRect.bottom};ClientToScreen(g_window,&p);UINT cmd=trackDarkMenu(menu,p);DestroyMenu(menu);g_menuDrawStorage.clear();
+    POINT p{(g_categoryRect.left+g_categoryRect.right)/2,g_categoryRect.bottom};ClientToScreen(g_window,&p);UINT cmd=trackDarkMenu(menu,p,TPM_CENTERALIGN|TPM_TOPALIGN);DestroyMenu(menu);g_menuDrawStorage.clear();
     if(cmd==ID_CATEGORY_ALL)g_currentCategory=kCategoryAll;else if(cmd==ID_CATEGORY_HIDDEN)g_currentCategory=kCategoryHidden;
     else if(cmd>=ID_CATEGORY_BASE&&cmd<ID_CATEGORY_BASE+g_categories.size())g_currentCategory=g_categories[cmd-ID_CATEGORY_BASE];
     else if(cmd==ID_CONTEXT_NEW_CATEGORY){auto name=promptCategory(g_window);if(!name.empty()&&addUserCategory(name))g_currentCategory=name;}
@@ -564,8 +565,8 @@ void createControls(HWND w) {
 LRESULT CALLBACK WndProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
     if(g_taskbarCreated&&msg==g_taskbarCreated){addTray(w);return 0;}
     switch(msg) {
-    case WM_MEASUREITEM:{auto* measure=(MEASUREITEMSTRUCT*)lp;if(measure&&measure->CtlType==ODT_MENU){auto* info=findMenuDrawInfo(measure->itemData);if(!info)break;HDC dc=GetDC(w);if(!dc)break;auto old=(HFONT)SelectObject(dc,g_smallFont);SIZE size{};GetTextExtentPoint32W(dc,info->text.c_str(),(int)info->text.size(),&size);SelectObject(dc,old);ReleaseDC(w,dc);measure->itemWidth=size.cx+scaleFor(w,42);measure->itemHeight=(UINT)scaleFor(w,30);return TRUE;}break;}
-    case WM_DRAWITEM:{auto* draw=(DRAWITEMSTRUCT*)lp;if(draw&&draw->CtlType==ODT_MENU){auto* info=findMenuDrawInfo(draw->itemData);if(!info)break;const bool selected=(draw->itemState&ODS_SELECTED)!=0;HBRUSH bg=CreateSolidBrush(selected?RGB(62,64,68):RGB(42,42,42));if(bg){FillRect(draw->hDC,&draw->rcItem,bg);DeleteObject(bg);}SetBkMode(draw->hDC,TRANSPARENT);SetTextColor(draw->hDC,(draw->itemState&ODS_DISABLED)?RGB(130,132,136):RGB(244,245,247));auto old=(HFONT)SelectObject(draw->hDC,g_smallFont);RECT text=draw->rcItem;text.left+=scaleFor(w,34);text.right-=scaleFor(w,10);DrawTextW(draw->hDC,info->text.c_str(),-1,&text,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);if(draw->itemState&ODS_CHECKED){RECT mark=draw->rcItem;mark.left+=scaleFor(w,10);mark.right=mark.left+scaleFor(w,16);DrawTextW(draw->hDC,L"✓",1,&mark,DT_LEFT|DT_VCENTER|DT_SINGLELINE);}SelectObject(draw->hDC,old);return TRUE;}break;}
+    case WM_MEASUREITEM:{auto* measure=(MEASUREITEMSTRUCT*)lp;if(measure&&measure->CtlType==ODT_MENU){auto* info=findMenuDrawInfo(measure->itemData);if(!info)break;HDC dc=GetDC(w);if(!dc)break;auto old=(HFONT)SelectObject(dc,g_smallFont);SIZE size{};GetTextExtentPoint32W(dc,info->text.c_str(),(int)info->text.size(),&size);SelectObject(dc,old);ReleaseDC(w,dc);measure->itemWidth=size.cx+scaleFor(w,info->hasSubmenu?56:42);measure->itemHeight=(UINT)scaleFor(w,30);return TRUE;}break;}
+    case WM_DRAWITEM:{auto* draw=(DRAWITEMSTRUCT*)lp;if(draw&&draw->CtlType==ODT_MENU){auto* info=findMenuDrawInfo(draw->itemData);if(!info)break;const bool selected=(draw->itemState&ODS_SELECTED)!=0;const COLORREF color=(draw->itemState&ODS_DISABLED)?RGB(130,132,136):RGB(244,245,247);HBRUSH bg=CreateSolidBrush(selected?RGB(62,64,68):RGB(42,42,42));if(bg){FillRect(draw->hDC,&draw->rcItem,bg);DeleteObject(bg);}SetBkMode(draw->hDC,TRANSPARENT);SetTextColor(draw->hDC,color);auto old=(HFONT)SelectObject(draw->hDC,g_smallFont);RECT text=draw->rcItem;text.left+=scaleFor(w,34);text.right-=scaleFor(w,info->hasSubmenu?28:10);DrawTextW(draw->hDC,info->text.c_str(),-1,&text,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);if(draw->itemState&ODS_CHECKED){RECT mark=draw->rcItem;mark.left+=scaleFor(w,10);mark.right=mark.left+scaleFor(w,16);DrawTextW(draw->hDC,L"✓",1,&mark,DT_LEFT|DT_VCENTER|DT_SINGLELINE);}if(info->hasSubmenu){const int cx=draw->rcItem.right-scaleFor(w,16),cy=(draw->rcItem.top+draw->rcItem.bottom)/2,arm=scaleFor(w,3);HPEN pen=CreatePen(PS_SOLID,(std::max)(1,scaleFor(w,1)),color);if(pen){auto oldPen=SelectObject(draw->hDC,pen);MoveToEx(draw->hDC,cx-arm,cy-arm,nullptr);LineTo(draw->hDC,cx,cy);LineTo(draw->hDC,cx-arm,cy+arm);SelectObject(draw->hDC,oldPen);DeleteObject(pen);}}SelectObject(draw->hDC,old);return TRUE;}break;}
     case WM_NCCREATE:g_window=w;return DefWindowProcW(w,msg,wp,lp);
     case WM_CREATE: {
         g_window=w;createControls(w);g_windowsAutostart=isWindowsAutostartEnabled();addTray(w);

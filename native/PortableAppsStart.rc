@@ -1,8 +1,8 @@
 #include <windows.h>
 IDI_APP ICON "PortableAppsStart.ico"
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,6,11,0
- PRODUCTVERSION 0,6,11,0
+ FILEVERSION 0,6,12,0
+ PRODUCTVERSION 0,6,12,0
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
  FILEOS 0x40004L
@@ -15,11 +15,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "PortableApps Start project\0"
             VALUE "FileDescription", "PortableApps Start launcher\0"
-            VALUE "FileVersion", "0.6.11.0\0"
+            VALUE "FileVersion", "0.6.12.0\0"
             VALUE "InternalName", "PortableAppsStart\0"
             VALUE "OriginalFilename", "PortableAppsStart.exe\0"
             VALUE "ProductName", "PortableApps Start\0"
-            VALUE "ProductVersion", "0.6.11\0"
+            VALUE "ProductVersion", "0.6.12\0"
         END
     END
     BLOCK "VarFileInfo"

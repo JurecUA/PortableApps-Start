@@ -1,5 +1,14 @@
 # История изменений
 
+## 0.6.14 — 2026-11-21
+
+- Apply DPI-sized icon extraction to PAF ICO files and icons embedded in every app executable before using the shell fallback.
+
+## 0.6.13 — 2026-11-21
+
+- Vertically center the category selector in the gap between pinned and all-apps grids.
+- Load PAF ICO icons at the DPI-scaled display size so Windows selects a suitable high-resolution frame.
+
 ## 0.6.12 — 2026-11-21
 
 - Close the flat tray menu on focus loss and use a normal activated popup to let Windows repaint the area behind it cleanly.

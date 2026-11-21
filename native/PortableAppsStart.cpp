@@ -257,6 +257,12 @@ std::wstring appSetting(const App& app,const std::wstring& section,const std::ws
     if(!app.legacyConfigKey.empty()&&app.configKey!=app.legacyConfigKey)return ini(g_userIniText,section,app.legacyConfigKey,fallback);
     return fallback;
 }
+HICON extractIconAtSize(const fs::path& path,int size) {
+    if(path.empty()||size<=0)return nullptr;
+    HICON icon{};
+    if(PrivateExtractIconsW(path.c_str(),0,size,size,&icon,nullptr,1,LR_LOADFROMFILE)==1&&icon)return icon;
+    return (HICON)LoadImageW(nullptr,path.c_str(),IMAGE_ICON,size,size,LR_LOADFROMFILE);
+}
 void loadApps() {
     for(auto& a:g_apps)if(a.icon)DestroyIcon(a.icon);
     g_apps.clear(); g_categories.clear();
@@ -317,8 +323,12 @@ void loadApps() {
     for (const auto& a:g_apps) if (std::find(g_categories.begin(),g_categories.end(),a.category)==g_categories.end()) g_categories.push_back(a.category);
     for(const auto& c:g_userCategories)if(std::find(g_categories.begin(),g_categories.end(),c)==g_categories.end())g_categories.push_back(c);
     std::sort(g_categories.begin(),g_categories.end(),[](const auto&a,const auto&b){return lower(a)<lower(b);});
+    const int iconSize=g_window?MulDiv(32,(int)GetDpiForWindow(g_window),96):32;
     for(auto& a:g_apps) {
-        if(!a.iconPath.empty())a.icon=(HICON)LoadImageW(nullptr,a.iconPath.c_str(),IMAGE_ICON,0,0,LR_LOADFROMFILE);
+        // Request the best frame at display resolution for every app icon,
+        // including ICOs and resources embedded in legacy EXE files.
+        if(!a.iconPath.empty())a.icon=extractIconAtSize(fs::path(a.iconPath),iconSize);
+        if(!a.icon)a.icon=extractIconAtSize(fs::path(a.launcher),iconSize);
         if(!a.icon){SHFILEINFOW sfi{};if(SHGetFileInfoW(a.launcher.c_str(),0,&sfi,sizeof(sfi),SHGFI_ICON|SHGFI_LARGEICON))a.icon=sfi.hIcon;}
         if(a.icon){ICONINFO ii{};if(GetIconInfo(a.icon,&ii)){BITMAP bm{};HBITMAP source=ii.hbmColor?ii.hbmColor:ii.hbmMask;if(source&&GetObjectW(source,sizeof(bm),&bm)){a.iconWidth=bm.bmWidth;a.iconHeight=ii.hbmColor?bm.bmHeight:bm.bmHeight/2;}if(ii.hbmColor)DeleteObject(ii.hbmColor);if(ii.hbmMask)DeleteObject(ii.hbmMask);}}
     }
@@ -372,13 +382,16 @@ void paintLauncher(HWND w,HDC dc) {
     const int cellW=(inner-4*gap)/5;auto pins=pinnedApps();auto apps=visibleApps();const int pinRows=(int)((pins.size()+4)/5);
     const int pinnedSection=scaleFor(w,30)+(std::max)(1,pinRows)*cellH+scaleFor(w,14);
     const int appTitleY=contentTop+pinnedSection-g_scrollY;
+    const int appGridY=appTitleY+scaleFor(w,36);
     const int categoryWidth=scaleFor(w,190),categoryHeight=scaleFor(w,34);
-    g_categoryRect={(client.right-categoryWidth)/2,appTitleY,(client.right+categoryWidth)/2,appTitleY+categoryHeight};
+    const int pinnedBottom=pins.empty()?contentTop+scaleFor(w,30)+cellH-scaleFor(w,5)-g_scrollY:
+        contentTop+scaleFor(w,25)+pinRows*cellH-scaleFor(w,3)-g_scrollY;
+    const int categoryTop=pinnedBottom+(appGridY-pinnedBottom-categoryHeight)/2;
+    g_categoryRect={(client.right-categoryWidth)/2,categoryTop,(client.right+categoryWidth)/2,categoryTop+categoryHeight};
     HBRUSH cb=CreateSolidBrush(RGB(47,51,58));auto ob=(HBRUSH)SelectObject(dc,cb);auto op=(HPEN)SelectObject(dc,GetStockObject(NULL_PEN));
     RoundRect(dc,g_categoryRect.left,g_categoryRect.top,g_categoryRect.right,g_categoryRect.bottom,scaleFor(w,10),scaleFor(w,10));SelectObject(dc,ob);SelectObject(dc,op);DeleteObject(cb);
     SetTextColor(dc,RGB(236,238,242));SelectObject(dc,g_smallFont);RECT ct=g_categoryRect;ct.left+=scaleFor(w,12);ct.right-=scaleFor(w,12);
     std::wstring catLabel=currentCategoryLabel()+L"   ▾";DrawTextW(dc,catLabel.c_str(),-1,&ct,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
-    const int appGridY=appTitleY+scaleFor(w,36);
     g_contentHeight=pinnedSection+scaleFor(w,42)+(int)((apps.size()+4)/5)*cellH+scaleFor(w,20);
     const int viewport=client.bottom-contentTop-scaleFor(w,8);g_scrollViewport=viewport;g_scrollMaximum=(std::max)(0,g_contentHeight-viewport);g_scrollY=std::clamp(g_scrollY,0,g_scrollMaximum);
     g_tileHits.clear();int saved=SaveDC(dc);IntersectClipRect(dc,pad,contentTop,client.right,client.bottom-scaleFor(w,10));

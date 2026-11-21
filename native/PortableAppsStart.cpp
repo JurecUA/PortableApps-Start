@@ -43,12 +43,14 @@ constexpr UINT_PTR TIMER_TRAY_RETRY = 2, TIMER_AUTOSTART = 3;
 constexpr int IDD_CATEGORY_PROMPT = 500, IDC_CATEGORY_PROMPT = 501;
 constexpr wchar_t kClassName[] = L"PortableAppsStartNativeWindow";
 constexpr wchar_t kPromptClassName[] = L"PortableAppsStartCategoryPrompt";
+constexpr wchar_t kFlatMenuClassName[] = L"PortableAppsStartFlatTrayMenu";
 constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kRunValue[] = L"PortableAppsStart";
 constexpr wchar_t kCategoryAll[] = L"@all", kCategoryHidden[] = L"@hidden";
 struct App { std::wstring folder, relativeKey, configKey, legacyConfigKey, name, category, launcher, iconPath; HICON icon{}; int iconWidth=32,iconHeight=32; unsigned long long launchCount=0; bool favorite = false, autoStart = false, hidden = false; };
 struct TileHit { RECT rect{}; int appIndex=-1; };
-struct MenuDrawInfo { std::wstring text; bool hasSubmenu=false; };
+struct MenuDrawInfo { std::wstring text; };
+struct FlatMenuItem { UINT id=0; std::wstring text; bool heading=false,radio=false,checked=false; };
 
 HINSTANCE g_instance{}; HWND g_window{};
 HICON g_icon{}; NOTIFYICONDATAW g_nid{};
@@ -68,6 +70,7 @@ bool g_restoringPosition=false;
 std::wstring g_sortMode=L"Usage";bool g_windowsAutostart=false;
 std::vector<std::unique_ptr<MenuDrawInfo>> g_menuDrawStorage;
 HBRUSH g_menuBackgroundBrush{},g_promptBackgroundBrush{},g_promptEditBrush{};
+HWND g_flatMenuWindow{};std::vector<FlatMenuItem> g_flatMenuItems;int g_flatMenuHover=-1,g_flatMenuRowHeight=36,g_flatMenuMargin=10,g_flatMenuWidth=280,g_flatMenuCommand=0;
 std::wstring trim(std::wstring s);
 int scaleFor(HWND w,int value);
 LRESULT CALLBACK PromptWndProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
@@ -464,8 +467,8 @@ void setDarkMenu(HMENU menu) {
     if(!g_menuBackgroundBrush)g_menuBackgroundBrush=CreateSolidBrush(RGB(42,42,42));
     MENUINFO mi{};mi.cbSize=sizeof(mi);mi.fMask=MIM_BACKGROUND;mi.hbrBack=g_menuBackgroundBrush;SetMenuInfo(menu,&mi);
 }
-MenuDrawInfo* makeMenuDrawInfo(const std::wstring& text,bool hasSubmenu=false) {
-    auto info=std::make_unique<MenuDrawInfo>();info->text=text;info->hasSubmenu=hasSubmenu;auto* raw=info.get();g_menuDrawStorage.push_back(std::move(info));return raw;
+MenuDrawInfo* makeMenuDrawInfo(const std::wstring& text) {
+    auto info=std::make_unique<MenuDrawInfo>();info->text=text;auto* raw=info.get();g_menuDrawStorage.push_back(std::move(info));return raw;
 }
 MenuDrawInfo* findMenuDrawInfo(ULONG_PTR data) {
     for(const auto& info:g_menuDrawStorage)if(info.get()==reinterpret_cast<MenuDrawInfo*>(data))return info.get();
@@ -475,7 +478,7 @@ void appendDarkMenuItem(HMENU menu,UINT id,const std::wstring& text,bool checked
     MENUITEMINFOW item{};item.cbSize=sizeof(item);item.fMask=MIIM_FTYPE|MIIM_ID|MIIM_DATA|MIIM_STATE;item.fType=MFT_OWNERDRAW;item.fState=(checked?MFS_CHECKED:0)|(disabled?MFS_DISABLED:0);item.wID=id;item.dwItemData=(ULONG_PTR)makeMenuDrawInfo(text);InsertMenuItemW(menu,(UINT)GetMenuItemCount(menu),TRUE,&item);
 }
 void appendDarkSubmenu(HMENU menu,HMENU submenu,const std::wstring& text) {
-    setDarkMenu(submenu);MENUITEMINFOW item{};item.cbSize=sizeof(item);item.fMask=MIIM_FTYPE|MIIM_DATA|MIIM_SUBMENU;item.fType=MFT_OWNERDRAW;item.dwItemData=(ULONG_PTR)makeMenuDrawInfo(text,true);item.hSubMenu=submenu;InsertMenuItemW(menu,(UINT)GetMenuItemCount(menu),TRUE,&item);
+    setDarkMenu(submenu);MENUITEMINFOW item{};item.cbSize=sizeof(item);item.fMask=MIIM_FTYPE|MIIM_DATA|MIIM_SUBMENU;item.fType=MFT_OWNERDRAW;item.dwItemData=(ULONG_PTR)makeMenuDrawInfo(text);item.hSubMenu=submenu;InsertMenuItemW(menu,(UINT)GetMenuItemCount(menu),TRUE,&item);
 }
 UINT trackDarkMenu(HMENU menu,POINT position,UINT alignment=0) {
     SetForegroundWindow(g_window);
@@ -533,10 +536,65 @@ void showLauncherContextMenu(POINT p) {
     UINT cmd=trackDarkMenu(menu,p);DestroyMenu(menu);g_menuDrawStorage.clear();handleLauncherOption(cmd);
 }
 void showMainWindow();
+int flatMenuItemAt(POINT p) {
+    if(p.x<0||p.x>=g_flatMenuWidth||p.y<g_flatMenuMargin)return -1;
+    const int row=(p.y-g_flatMenuMargin)/g_flatMenuRowHeight;
+    if(row<0||row>=(int)g_flatMenuItems.size()||g_flatMenuItems[(size_t)row].heading)return -1;
+    return row;
+}
+LRESULT CALLBACK FlatMenuWndProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
+    switch(msg) {
+    case WM_ERASEBKGND:return 1;
+    case WM_PAINT:{
+        PAINTSTRUCT ps{};HDC dc=BeginPaint(w,&ps);RECT client{};GetClientRect(w,&client);
+        HBRUSH background=CreateSolidBrush(RGB(34,36,41));FillRect(dc,&client,background);DeleteObject(background);
+        SetBkMode(dc,TRANSPARENT);auto oldFont=(HFONT)SelectObject(dc,g_smallFont);
+        for(size_t i=0;i<g_flatMenuItems.size();++i){
+            const int top=g_flatMenuMargin+(int)i*g_flatMenuRowHeight;RECT row{g_flatMenuMargin,top,g_flatMenuWidth-g_flatMenuMargin,top+g_flatMenuRowHeight};
+            const auto& item=g_flatMenuItems[i];
+            if(item.heading){
+                if(i>0){HPEN divider=CreatePen(PS_SOLID,1,RGB(62,64,71));if(divider){auto oldPen=SelectObject(dc,divider);MoveToEx(dc,g_flatMenuMargin+4,top,nullptr);LineTo(dc,g_flatMenuWidth-g_flatMenuMargin-4,top);SelectObject(dc,oldPen);DeleteObject(divider);}}
+                SetTextColor(dc,RGB(157,163,174));RECT label=row;label.left+=scaleFor(w,10);label.top+=scaleFor(w,2);DrawTextW(dc,item.text.c_str(),-1,&label,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);continue;
+            }
+            if((int)i==g_flatMenuHover){HBRUSH hover=CreateSolidBrush(RGB(51,54,61));if(hover){auto oldBrush=SelectObject(dc,hover);RoundRect(dc,row.left,row.top,row.right,row.bottom,scaleFor(w,8),scaleFor(w,8));SelectObject(dc,oldBrush);DeleteObject(hover);}}
+            SetTextColor(dc,RGB(239,241,245));RECT label=row;label.left+=scaleFor(w,item.radio?38:12);label.right-=scaleFor(w,12);DrawTextW(dc,item.text.c_str(),-1,&label,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            const int cy=(row.top+row.bottom)/2,cx=g_flatMenuMargin+scaleFor(w,18),radius=scaleFor(w,item.radio?7:6);
+            if(item.radio){HPEN pen=CreatePen(PS_SOLID,scaleFor(w,1),RGB(158,164,174));HBRUSH brush=(HBRUSH)GetStockObject(HOLLOW_BRUSH);auto oldPen=SelectObject(dc,pen);auto oldBrush=SelectObject(dc,brush);Ellipse(dc,cx-radius,cy-radius,cx+radius,cy+radius);SelectObject(dc,oldBrush);SelectObject(dc,oldPen);DeleteObject(pen);if(item.checked){HBRUSH dot=CreateSolidBrush(RGB(112,178,255));RECT inner{cx-scaleFor(w,3),cy-scaleFor(w,3),cx+scaleFor(w,3),cy+scaleFor(w,3)};FillRect(dc,&inner,dot);DeleteObject(dot);}}
+            else if(item.checked){HPEN pen=CreatePen(PS_SOLID,scaleFor(w,2),RGB(112,178,255));if(pen){auto oldPen=SelectObject(dc,pen);MoveToEx(dc,cx-scaleFor(w,4),cy,nullptr);LineTo(dc,cx-scaleFor(w,1),cy+scaleFor(w,3));LineTo(dc,cx+scaleFor(w,5),cy-scaleFor(w,4));SelectObject(dc,oldPen);DeleteObject(pen);}}
+        }
+        SelectObject(dc,oldFont);EndPaint(w,&ps);return 0;
+    }
+    case WM_MOUSEMOVE:{POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};const int row=flatMenuItemAt(p);if(row!=g_flatMenuHover){g_flatMenuHover=row;InvalidateRect(w,nullptr,FALSE);}TRACKMOUSEEVENT tme{sizeof(tme),TME_LEAVE,w,0};TrackMouseEvent(&tme);return 0;}
+    case WM_MOUSELEAVE:if(g_flatMenuHover!=-1){g_flatMenuHover=-1;InvalidateRect(w,nullptr,FALSE);}return 0;
+    case WM_LBUTTONUP:{POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};const int row=flatMenuItemAt(p);if(row>=0)g_flatMenuCommand=(int)g_flatMenuItems[(size_t)row].id;DestroyWindow(w);return 0;}
+    case WM_RBUTTONUP:case WM_KEYDOWN:if(msg==WM_RBUTTONUP||wp==VK_ESCAPE){DestroyWindow(w);return 0;}break;
+    case WM_NCDESTROY:if(g_flatMenuWindow==w)g_flatMenuWindow=nullptr;return DefWindowProcW(w,msg,wp,lp);
+    }
+    return DefWindowProcW(w,msg,wp,lp);
+}
+UINT showFlatTrayMenu(POINT cursor) {
+    g_flatMenuItems={{ID_TRAY_OPEN,L"Открыть PortableApps Start"},{ID_TRAY_REFRESH,L"Обновить список приложений"},{ID_TRAY_ROOT,L"Открыть папку PortableApps"},
+        {0,L"СОРТИРОВКА ПРИЛОЖЕНИЙ",true},{ID_SORT_USAGE,L"По числу запусков",false,true,g_sortMode==L"Usage"},{ID_SORT_NAME_ASC,L"По имени: А — Я",false,true,g_sortMode==L"NameAsc"},{ID_SORT_NAME_DESC,L"По имени: Я — А",false,true,g_sortMode==L"NameDesc"},
+        {ID_WINDOWS_AUTOSTART,L"Запускать вместе с Windows",false,false,g_windowsAutostart},{ID_TRAY_EXIT,L"Выход"}};
+    HDC dc=GetDC(g_window);auto old=(HFONT)SelectObject(dc,g_smallFont);int textWidth=0;
+    for(const auto& item:g_flatMenuItems){SIZE size{};GetTextExtentPoint32W(dc,item.text.c_str(),(int)item.text.size(),&size);textWidth=(std::max)(textWidth,(int)size.cx);}
+    SelectObject(dc,old);ReleaseDC(g_window,dc);
+    const int dpi=(int)GetDpiForWindow(g_window);g_flatMenuRowHeight=scaleFor(g_window,34);g_flatMenuMargin=scaleFor(g_window,8);g_flatMenuWidth=textWidth+scaleFor(g_window,58);
+    const int height=g_flatMenuMargin*2+(int)g_flatMenuItems.size()*g_flatMenuRowHeight;
+    HMONITOR monitor=MonitorFromPoint(cursor,MONITOR_DEFAULTTONEAREST);MONITORINFO mi{sizeof(mi)};GetMonitorInfoW(monitor,&mi);
+    const int workLeft=(int)mi.rcWork.left,workTop=(int)mi.rcWork.top,workRight=(int)mi.rcWork.right,workBottom=(int)mi.rcWork.bottom;
+    const int x=std::clamp((int)cursor.x-g_flatMenuWidth,workLeft,(std::max)(workLeft,workRight-g_flatMenuWidth));
+    const int y=std::clamp((int)cursor.y-height,workTop,(std::max)(workTop,workBottom-height));
+    g_flatMenuHover=-1;g_flatMenuCommand=0;
+    HWND popup=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,kFlatMenuClassName,L"",WS_POPUP,x,y,g_flatMenuWidth,height,g_window,nullptr,g_instance,nullptr);
+    if(!popup)return 0;g_flatMenuWindow=popup;
+    HRGN region=CreateRoundRectRgn(0,0,g_flatMenuWidth+1,height+1,scaleFor(g_window,16),scaleFor(g_window,16));if(region&&!SetWindowRgn(popup,region,TRUE))DeleteObject(region);
+    ShowWindow(popup,SW_SHOWNOACTIVATE);UpdateWindow(popup);SetCapture(popup);
+    MSG msg;while(IsWindow(popup)){const BOOL result=GetMessageW(&msg,nullptr,0,0);if(result<=0)break;TranslateMessage(&msg);DispatchMessageW(&msg);}
+    if(GetCapture()==popup)ReleaseCapture();g_flatMenuItems.clear();return (UINT)g_flatMenuCommand;
+}
 void showTrayMenu() {
-    g_menuDrawStorage.clear();HMENU m=CreatePopupMenu();setDarkMenu(m);appendDarkMenuItem(m,ID_TRAY_OPEN,L"Открыть PortableApps Start");appendDarkMenuItem(m,ID_TRAY_REFRESH,L"Обновить список приложений");
-    appendDarkMenuItem(m,ID_TRAY_ROOT,L"Открыть папку PortableApps");appendLauncherOptions(m);appendDarkMenuItem(m,ID_TRAY_EXIT,L"Выход");
-    POINT p{};GetCursorPos(&p);UINT c=trackDarkMenu(m,p);DestroyMenu(m);g_menuDrawStorage.clear();
+    POINT p{};GetCursorPos(&p);const UINT c=showFlatTrayMenu(p);
     if(c==ID_TRAY_OPEN)showMainWindow();else if(c==ID_TRAY_REFRESH)refreshList();else if(c==ID_TRAY_ROOT)openRoot();else if(c==ID_TRAY_EXIT)DestroyWindow(g_window);else handleLauncherOption(c);
 }
 void showMainWindow() {
@@ -565,8 +623,8 @@ void createControls(HWND w) {
 LRESULT CALLBACK WndProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
     if(g_taskbarCreated&&msg==g_taskbarCreated){addTray(w);return 0;}
     switch(msg) {
-    case WM_MEASUREITEM:{auto* measure=(MEASUREITEMSTRUCT*)lp;if(measure&&measure->CtlType==ODT_MENU){auto* info=findMenuDrawInfo(measure->itemData);if(!info)break;HDC dc=GetDC(w);if(!dc)break;auto old=(HFONT)SelectObject(dc,g_smallFont);SIZE size{};GetTextExtentPoint32W(dc,info->text.c_str(),(int)info->text.size(),&size);SelectObject(dc,old);ReleaseDC(w,dc);measure->itemWidth=size.cx+scaleFor(w,info->hasSubmenu?56:42);measure->itemHeight=(UINT)scaleFor(w,30);return TRUE;}break;}
-    case WM_DRAWITEM:{auto* draw=(DRAWITEMSTRUCT*)lp;if(draw&&draw->CtlType==ODT_MENU){auto* info=findMenuDrawInfo(draw->itemData);if(!info)break;const bool selected=(draw->itemState&ODS_SELECTED)!=0;const COLORREF color=(draw->itemState&ODS_DISABLED)?RGB(130,132,136):RGB(244,245,247);HBRUSH bg=CreateSolidBrush(selected?RGB(62,64,68):RGB(42,42,42));if(bg){FillRect(draw->hDC,&draw->rcItem,bg);DeleteObject(bg);}SetBkMode(draw->hDC,TRANSPARENT);SetTextColor(draw->hDC,color);auto old=(HFONT)SelectObject(draw->hDC,g_smallFont);RECT text=draw->rcItem;text.left+=scaleFor(w,34);text.right-=scaleFor(w,info->hasSubmenu?28:10);DrawTextW(draw->hDC,info->text.c_str(),-1,&text,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);if(draw->itemState&ODS_CHECKED){RECT mark=draw->rcItem;mark.left+=scaleFor(w,10);mark.right=mark.left+scaleFor(w,16);DrawTextW(draw->hDC,L"✓",1,&mark,DT_LEFT|DT_VCENTER|DT_SINGLELINE);}if(info->hasSubmenu){const int cx=draw->rcItem.right-scaleFor(w,16),cy=(draw->rcItem.top+draw->rcItem.bottom)/2,arm=scaleFor(w,3);HPEN pen=CreatePen(PS_SOLID,(std::max)(1,scaleFor(w,1)),color);if(pen){auto oldPen=SelectObject(draw->hDC,pen);MoveToEx(draw->hDC,cx-arm,cy-arm,nullptr);LineTo(draw->hDC,cx,cy);LineTo(draw->hDC,cx-arm,cy+arm);SelectObject(draw->hDC,oldPen);DeleteObject(pen);}}SelectObject(draw->hDC,old);return TRUE;}break;}
+    case WM_MEASUREITEM:{auto* measure=(MEASUREITEMSTRUCT*)lp;if(measure&&measure->CtlType==ODT_MENU){auto* info=findMenuDrawInfo(measure->itemData);if(!info)break;HDC dc=GetDC(w);if(!dc)break;auto old=(HFONT)SelectObject(dc,g_smallFont);SIZE size{};GetTextExtentPoint32W(dc,info->text.c_str(),(int)info->text.size(),&size);SelectObject(dc,old);ReleaseDC(w,dc);measure->itemWidth=size.cx+scaleFor(w,42);measure->itemHeight=(UINT)scaleFor(w,30);return TRUE;}break;}
+    case WM_DRAWITEM:{auto* draw=(DRAWITEMSTRUCT*)lp;if(draw&&draw->CtlType==ODT_MENU){auto* info=findMenuDrawInfo(draw->itemData);if(!info)break;const bool selected=(draw->itemState&ODS_SELECTED)!=0;HBRUSH bg=CreateSolidBrush(selected?RGB(62,64,68):RGB(42,42,42));if(bg){FillRect(draw->hDC,&draw->rcItem,bg);DeleteObject(bg);}SetBkMode(draw->hDC,TRANSPARENT);SetTextColor(draw->hDC,(draw->itemState&ODS_DISABLED)?RGB(130,132,136):RGB(244,245,247));auto old=(HFONT)SelectObject(draw->hDC,g_smallFont);RECT text=draw->rcItem;text.left+=scaleFor(w,34);text.right-=scaleFor(w,10);DrawTextW(draw->hDC,info->text.c_str(),-1,&text,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);if(draw->itemState&ODS_CHECKED){RECT mark=draw->rcItem;mark.left+=scaleFor(w,10);mark.right=mark.left+scaleFor(w,16);DrawTextW(draw->hDC,L"✓",1,&mark,DT_LEFT|DT_VCENTER|DT_SINGLELINE);}SelectObject(draw->hDC,old);return TRUE;}break;}
     case WM_NCCREATE:g_window=w;return DefWindowProcW(w,msg,wp,lp);
     case WM_CREATE: {
         g_window=w;createControls(w);g_windowsAutostart=isWindowsAutostartEnabled();addTray(w);
@@ -618,6 +676,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int) {
     g_instance=instance;SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);g_taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");setPaths();
     HANDLE mutex=CreateMutexW(nullptr,TRUE,L"Local\\PortableAppsStartNative_v1");if(mutex&&GetLastError()==ERROR_ALREADY_EXISTS){HWND old=FindWindowW(kClassName,nullptr);if(old){ShowWindow(old,SW_RESTORE);ShowWindow(old,SW_SHOW);SetForegroundWindow(old);BringWindowToTop(old);}CloseHandle(mutex);return 0;}
     g_icon=makeIcon(32);
+    WNDCLASSEXW mc{};mc.cbSize=sizeof(mc);mc.hInstance=instance;mc.lpfnWndProc=FlatMenuWndProc;mc.lpszClassName=kFlatMenuClassName;mc.hCursor=LoadCursorW(nullptr,IDC_ARROW);mc.hbrBackground=(HBRUSH)GetStockObject(BLACK_BRUSH);RegisterClassExW(&mc);
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=instance;wc.lpfnWndProc=WndProc;wc.lpszClassName=kClassName;wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);wc.hIcon=g_icon;wc.hIconSm=g_icon;wc.hbrBackground=(HBRUSH)GetStockObject(BLACK_BRUSH);RegisterClassExW(&wc);
     WNDCLASSEXW pc{};pc.cbSize=sizeof(pc);pc.hInstance=instance;pc.lpfnWndProc=PromptWndProc;pc.lpszClassName=kPromptClassName;pc.hCursor=LoadCursorW(nullptr,IDC_ARROW);pc.hbrBackground=(HBRUSH)GetStockObject(BLACK_BRUSH);RegisterClassExW(&pc);
     POINT cursor{};GetCursorPos(&cursor);HMONITOR monitor=MonitorFromPoint(cursor,MONITOR_DEFAULTTONEAREST);MONITORINFO mi{sizeof(mi)};GetMonitorInfoW(monitor,&mi);int dpi=(int)GetDpiForSystem();
@@ -625,7 +684,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int) {
     int x=GetPrivateProfileIntW(L"Window",L"Left",mi.rcWork.right-width-MulDiv(16,dpi,96),g_iniPath.c_str()),y=GetPrivateProfileIntW(L"Window",L"Top",mi.rcWork.top+(mi.rcWork.bottom-mi.rcWork.top-height)/2,g_iniPath.c_str());
     x=std::clamp(x,(int)mi.rcWork.left,(int)mi.rcWork.right-width);y=std::clamp(y,(int)mi.rcWork.top,(int)mi.rcWork.bottom-height);
     g_window=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_TOPMOST,kClassName,L"PortableApps Start",WS_POPUP|WS_CLIPCHILDREN,x,y,width,height,nullptr,nullptr,instance,nullptr);
-    if(g_window){const BOOL dark=TRUE;const int corner=2,backdrop=2;DwmSetWindowAttribute(g_window,(DWMWINDOWATTRIBUTE)20,&dark,sizeof(dark));DwmSetWindowAttribute(g_window,(DWMWINDOWATTRIBUTE)33,&corner,sizeof(corner));DwmSetWindowAttribute(g_window,(DWMWINDOWATTRIBUTE)38,&backdrop,sizeof(backdrop));}
+    if(g_window){HRGN region=CreateRoundRectRgn(0,0,width+1,height+1,MulDiv(18,dpi,96),MulDiv(18,dpi,96));if(region&&!SetWindowRgn(g_window,region,TRUE))DeleteObject(region);const BOOL dark=TRUE;const int corner=2,backdrop=2;const COLORREF noBorder=0xFFFFFFFE;DwmSetWindowAttribute(g_window,(DWMWINDOWATTRIBUTE)20,&dark,sizeof(dark));DwmSetWindowAttribute(g_window,(DWMWINDOWATTRIBUTE)33,&corner,sizeof(corner));DwmSetWindowAttribute(g_window,(DWMWINDOWATTRIBUTE)34,&noBorder,sizeof(noBorder));DwmSetWindowAttribute(g_window,(DWMWINDOWATTRIBUTE)38,&backdrop,sizeof(backdrop));}
     if(!g_window)return 1;ShowWindow(g_window,SW_SHOW);UpdateWindow(g_window);
     MSG msg;while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}
     if(g_icon)DestroyIcon(g_icon);if(g_font)DeleteObject(g_font);if(g_smallFont)DeleteObject(g_smallFont);if(g_titleFont)DeleteObject(g_titleFont);

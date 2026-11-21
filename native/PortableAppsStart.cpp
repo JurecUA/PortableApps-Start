@@ -80,7 +80,7 @@ LRESULT CALLBACK PromptWndProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
     case WM_NCHITTEST:{POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(w,&p);RECT r{};GetClientRect(w,&r);if(p.y<scaleFor(w,40)&&p.x<r.right-scaleFor(w,42))return HTCAPTION;return HTCLIENT;}
     case WM_LBUTTONUP:{POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};RECT r{};GetClientRect(w,&r);if(p.y<scaleFor(w,40)&&p.x>=r.right-scaleFor(w,42)){DestroyWindow(w);return 0;}break;}
     case WM_KEYDOWN:if(wp==VK_ESCAPE){SendMessageW(w,WM_COMMAND,IDCANCEL,0);return 0;}break;
-    case WM_COMMAND:if(LOWORD(wp)==IDOK||LOWORD(wp)==IDCANCEL){if(LOWORD(wp)==IDOK){wchar_t value[256]{};GetDlgItemTextW(w,IDC_CATEGORY_PROMPT,value,256);g_promptResult=trim(value);}DestroyWindow(w);return 0;}break;
+    case WM_COMMAND:if(LOWORD(wp)==IDOK||LOWORD(wp)==IDCANCEL){if(LOWORD(wp)==IDOK){HWND edit=GetDlgItem(w,IDC_CATEGORY_PROMPT);const int length=GetWindowTextLengthW(edit);if(length>0&&length<32768){std::wstring value((size_t)length+1,L'\0');const int copied=GetWindowTextW(edit,value.data(),length+1);value.resize((size_t)(std::max)(0,copied));g_promptResult=trim(std::move(value));}}DestroyWindow(w);return 0;}break;
     case WM_CLOSE:DestroyWindow(w);return 0;
     }
     return DefWindowProcW(w,msg,wp,lp);
@@ -93,10 +93,18 @@ std::wstring trim(std::wstring s) {
 }
 std::wstring lower(std::wstring s) { std::transform(s.begin(), s.end(), s.begin(), towlower); return s; }
 std::wstring readText(const fs::path& p) {
-    constexpr std::streamoff maxIniBytes=16*1024*1024;
-    std::ifstream f(p, std::ios::binary); if (!f) return {};
-    f.seekg(0,std::ios::end);const auto length=f.tellg();if(length<=0||length>maxIniBytes)return {};f.seekg(0,std::ios::beg);
-    std::string bytes((size_t)length,'\0');f.read(bytes.data(),length);if(!f)return {};
+    constexpr DWORD maxIniBytes=16*1024*1024;
+    HANDLE file=CreateFileW(p.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(file==INVALID_HANDLE_VALUE)return {};
+    LARGE_INTEGER size{};
+    if(!GetFileSizeEx(file,&size)||size.QuadPart<=0||size.QuadPart>maxIniBytes){CloseHandle(file);return {};}
+    std::string bytes((size_t)size.QuadPart,'\0');DWORD total=0;
+    while(total<(DWORD)bytes.size()){
+        DWORD read=0;const DWORD remaining=(DWORD)bytes.size()-total;
+        if(!ReadFile(file,bytes.data()+total,remaining,&read,nullptr)||read==0){CloseHandle(file);return {};}
+        total+=read;
+    }
+    CloseHandle(file);
     if (bytes.size() >= 2 && (BYTE)bytes[0] == 0xFF && (BYTE)bytes[1] == 0xFE) {
         if((bytes.size()-2)%2!=0)return {};
         std::wstring w((bytes.size() - 2) / 2, L'\0'); memcpy(w.data(), bytes.data() + 2, w.size() * 2); return w;
@@ -394,7 +402,7 @@ void runApp(int index,bool admin=false) {
     const std::wstring workingDirectory=executable.parent_path().wstring();
     SHELLEXECUTEINFOW si{};si.cbSize=sizeof(si);si.fMask=SEE_MASK_FLAG_NO_UI;si.hwnd=g_window;si.lpVerb=admin?L"runas":L"open";
     si.lpFile=executablePath.c_str();si.lpDirectory=workingDirectory.c_str();si.nShow=SW_SHOWNORMAL;
-    if(!ShellExecuteExW(&si)) { DWORD e=GetLastError(); if(e!=ERROR_CANCELLED) MessageBoxW(g_window,L"Не удалось запустить приложение.",a.name.c_str(),MB_ICONERROR); }
+    if(!ShellExecuteExW(&si)) { DWORD e=GetLastError(); if(e!=ERROR_CANCELLED){wchar_t systemMessage[512]{};FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM|FORMAT_MESSAGE_IGNORE_INSERTS,nullptr,e,0,systemMessage,(DWORD)std::size(systemMessage),nullptr);std::wstring message=L"Не удалось запустить приложение.\n";message+=systemMessage;MessageBoxW(g_window,message.c_str(),a.name.c_str(),MB_ICONERROR|MB_SETFOREGROUND);} }
     else {++a.launchCount;saveLaunchCount(a);ShowWindow(g_window,SW_HIDE);}
 }
 std::wstring normalizedExecutablePath(const std::wstring& path) {
@@ -440,7 +448,7 @@ std::wstring promptCategory(HWND owner) {
     EnableWindow(owner,TRUE);SetForegroundWindow(owner);return g_promptResult;
 }
 bool addUserCategory(const std::wstring& name) {
-    if(name.empty()||name.find(L'|')!=std::wstring::npos)return false;
+    if(name.empty()||name.find_first_of(L"|\r\n")!=std::wstring::npos)return false;
     const bool exists=std::any_of(g_userCategories.begin(),g_userCategories.end(),[&](const auto& c){return lower(c)==lower(name);});
     if(exists)return true;
     g_userCategories.push_back(name);

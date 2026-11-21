@@ -1,5 +1,10 @@
 # История изменений
 
+## 0.6.12 — 2026-11-21
+
+- Close the flat tray menu on focus loss and use a normal activated popup to let Windows repaint the area behind it cleanly.
+- Preserve quit messages in the popup loop and explicitly signal application termination after choosing Exit.
+
 ## 0.6.11 — 2026-11-21
 
 - Replace the tray context menu with a frameless custom flat popup featuring rounded corners and inline sorting choices.

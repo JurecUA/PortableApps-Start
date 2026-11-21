@@ -1,5 +1,11 @@
 # История изменений
 
+## 0.6.9 — 2026-11-21
+
+- Read configuration files with `CreateFileW`/`ReadFile` so Unicode paths are handled explicitly.
+- Read category names dynamically instead of silently truncating input at 255 characters; reject line breaks in saved category names.
+- Include the Windows error message when an application fails to launch.
+
 ## 0.6.8 — 2026-11-21
 
 - Fix the launcher working-directory lifetime when starting an app from its context menu.

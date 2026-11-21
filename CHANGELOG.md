@@ -1,5 +1,10 @@
 # История изменений
 
+## 0.6.11 — 2026-11-21
+
+- Replace the tray context menu with a frameless custom flat popup featuring rounded corners and inline sorting choices.
+- Remove the main window border and apply a rounded region to match the flat interface.
+
 ## 0.6.10 — 2026-11-21
 
 - Center the category selector and its popup menu over the launcher.

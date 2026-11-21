@@ -2,7 +2,7 @@
 
 Compact Windows launcher for PortableApps.com installations. The native launcher is written in C++17 and Win32; it does not require Delphi or a separate .NET runtime.
 
-## Current version: 0.6.9
+## Current version: 0.6.10
 
 This is the first native C++ prototype, built as a standalone x64 EXE. The 30.4 Delphi source archives remain in `source/upstream-30.4` as reference material. This prototype replaces the launcher UI and its core app discovery/launch path; it does not port the complete Platform or Updater codebase.
 

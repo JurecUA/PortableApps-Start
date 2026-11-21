@@ -567,7 +567,8 @@ LRESULT CALLBACK FlatMenuWndProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
     case WM_MOUSEMOVE:{POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};const int row=flatMenuItemAt(p);if(row!=g_flatMenuHover){g_flatMenuHover=row;InvalidateRect(w,nullptr,FALSE);}TRACKMOUSEEVENT tme{sizeof(tme),TME_LEAVE,w,0};TrackMouseEvent(&tme);return 0;}
     case WM_MOUSELEAVE:if(g_flatMenuHover!=-1){g_flatMenuHover=-1;InvalidateRect(w,nullptr,FALSE);}return 0;
     case WM_LBUTTONUP:{POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};const int row=flatMenuItemAt(p);if(row>=0)g_flatMenuCommand=(int)g_flatMenuItems[(size_t)row].id;DestroyWindow(w);return 0;}
-    case WM_RBUTTONUP:case WM_KEYDOWN:if(msg==WM_RBUTTONUP||wp==VK_ESCAPE){DestroyWindow(w);return 0;}break;
+    case WM_RBUTTONUP:case WM_CANCELMODE:case WM_KILLFOCUS:case WM_CLOSE:DestroyWindow(w);return 0;
+    case WM_KEYDOWN:if(wp==VK_ESCAPE){DestroyWindow(w);return 0;}break;
     case WM_NCDESTROY:if(g_flatMenuWindow==w)g_flatMenuWindow=nullptr;return DefWindowProcW(w,msg,wp,lp);
     }
     return DefWindowProcW(w,msg,wp,lp);
@@ -586,16 +587,16 @@ UINT showFlatTrayMenu(POINT cursor) {
     const int x=std::clamp((int)cursor.x-g_flatMenuWidth,workLeft,(std::max)(workLeft,workRight-g_flatMenuWidth));
     const int y=std::clamp((int)cursor.y-height,workTop,(std::max)(workTop,workBottom-height));
     g_flatMenuHover=-1;g_flatMenuCommand=0;
-    HWND popup=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,kFlatMenuClassName,L"",WS_POPUP,x,y,g_flatMenuWidth,height,g_window,nullptr,g_instance,nullptr);
+    HWND popup=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,kFlatMenuClassName,L"",WS_POPUP,x,y,g_flatMenuWidth,height,g_window,nullptr,g_instance,nullptr);
     if(!popup)return 0;g_flatMenuWindow=popup;
     HRGN region=CreateRoundRectRgn(0,0,g_flatMenuWidth+1,height+1,scaleFor(g_window,16),scaleFor(g_window,16));if(region&&!SetWindowRgn(popup,region,TRUE))DeleteObject(region);
-    ShowWindow(popup,SW_SHOWNOACTIVATE);UpdateWindow(popup);SetCapture(popup);
-    MSG msg;while(IsWindow(popup)){const BOOL result=GetMessageW(&msg,nullptr,0,0);if(result<=0)break;TranslateMessage(&msg);DispatchMessageW(&msg);}
-    if(GetCapture()==popup)ReleaseCapture();g_flatMenuItems.clear();return (UINT)g_flatMenuCommand;
+    ShowWindow(popup,SW_SHOW);SetForegroundWindow(popup);SetFocus(popup);UpdateWindow(popup);
+    MSG msg;while(IsWindow(popup)){const BOOL result=GetMessageW(&msg,nullptr,0,0);if(result<=0){if(result==0)PostQuitMessage((int)msg.wParam);break;}TranslateMessage(&msg);DispatchMessageW(&msg);}
+    g_flatMenuItems.clear();return (UINT)g_flatMenuCommand;
 }
 void showTrayMenu() {
     POINT p{};GetCursorPos(&p);const UINT c=showFlatTrayMenu(p);
-    if(c==ID_TRAY_OPEN)showMainWindow();else if(c==ID_TRAY_REFRESH)refreshList();else if(c==ID_TRAY_ROOT)openRoot();else if(c==ID_TRAY_EXIT)DestroyWindow(g_window);else handleLauncherOption(c);
+    if(c==ID_TRAY_OPEN)showMainWindow();else if(c==ID_TRAY_REFRESH)refreshList();else if(c==ID_TRAY_ROOT)openRoot();else if(c==ID_TRAY_EXIT){DestroyWindow(g_window);PostQuitMessage(0);}else handleLauncherOption(c);
 }
 void showMainWindow() {
     POINT cursor{};GetCursorPos(&cursor);HMONITOR monitor=MonitorFromPoint(cursor,MONITOR_DEFAULTTONEAREST);MONITORINFO mi{sizeof(mi)};GetMonitorInfoW(monitor,&mi);

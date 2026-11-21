@@ -1,5 +1,10 @@
 # История изменений
 
+## 0.6.10 — 2026-11-21
+
+- Center the category selector and its popup menu over the launcher.
+- Draw submenu chevrons in owner-drawn menus so the sort submenu arrow is visible.
+
 ## 0.6.9 — 2026-11-21
 
 - Read configuration files with `CreateFileW`/`ReadFile` so Unicode paths are handled explicitly.

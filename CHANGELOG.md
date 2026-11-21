@@ -1,5 +1,65 @@
 # История изменений
 
+## 0.6.8 — 2026-11-21
+
+- Fix the launcher working-directory lifetime when starting an app from its context menu.
+- Refuse invalid launch targets outside the PortableApps folder.
+- Report failed settings writes and preserve the previous in-memory setting when saving fails.
+- Guard icon creation against GDI allocation failures; cap INI reads and keep per-folder scan errors local.
+
+## 0.6.7 — 2026-11-21
+
+- Keep the app's working-directory string alive through `ShellExecuteExW`; validate that launch targets are existing EXE files inside the PortableApps folder.
+- Bound INI reads, reject malformed UTF-16 byte lengths, check settings-write failures, and isolate per-folder enumeration errors.
+- Check GDI resource creation in the launcher icon path and normalize executable paths before duplicate-process checks.
+
+## 0.6.6 — 2026-11-21
+
+- Guard owner-drawn menu callbacks against stale item data and complete popup dismissal with the tray owner window.
+- Use unique launcher keys for PAF multi-icon preferences, while reading older folder-based settings for compatibility.
+- Check candidate running processes in one snapshot during app autostart instead of scanning the full process list per app.
+- Release shared menu and dialog brushes when the launcher exits.
+
+## 0.6.5 — 2026-11-21
+
+- Apply the dark theme to category creation, all launcher menus, and tray menus; remove the light system dialog frame.
+- Double-buffer launcher painting and repaint only the tiles whose hover state changes to prevent flicker.
+- Remove the category selector outline and tighten its spacing above the app grid.
+
+## 0.6.4 — 2026-11-21
+
+- Use Segoe UI Variable throughout the launcher.
+- Move the category selector below the pinned apps and draw its popup using the same dark palette as the launcher.
+- Remove the Pinned option from the category popup and remove the horizontal divider under the pinned section.
+- Render every app icon in a uniform 32 px box, scaling small source icons such as Chrome's to match while preserving aspect ratio.
+
+## 0.6.3 — 2026-11-18
+
+- Fix the app-name caption baseline so it remains below icons without changing their display size.
+- Remove favorite star overlays while keeping the pinned-app area and its pin/unpin context action.
+- Track and persist app launch counts; sort apps and pins by usage by default, with alphabetical choices in the launcher context menu.
+- Tighten the five-column grid and reduce the launcher window to fit it.
+- Add a Windows startup toggle to the launcher context menu and tray menu, stored under the current user's Run registry key and off by default.
+
+## 0.6.2 — 2026-11-18
+
+- Read source icon dimensions and preserve them up to the 32 px Start-menu icon size, without enlarging small images or stretching non-square icons.
+
+## 0.6.1 — 2026-11-18
+
+- Use 32 px app icons without enlarging extracted images.
+- Make All Apps a dedicated filter state so every discovered, non-hidden app is shown.
+- Replace the bright system scrollbar with a narrow dark scrollbar that widens slightly on hover.
+- Stop invalidating the full launcher when the pointer moves across app icons, removing icon flicker.
+
+## 0.6.0 — 2026-11-18
+
+- Remember the launcher position across hide, minimize, and restart.
+- Reduce the window to a compact five-column layout and remove the app-name header and tile cards.
+- Draw app icons at 64 logical pixels while preserving their square icon aspect.
+- Reset scrolling when switching categories and provide an explicit Hidden Apps category.
+- Add Hide/Show to each app context menu; hidden apps are excluded from normal views and autostart remains configurable.
+
 ## 0.5.0 — 2026-11-18
 
 - Заменён табличный экран на компактное окно в стиле меню «Пуск»: закреплённые и общие приложения показаны плитками по пять в строке; окно появляется справа по центру экрана.
@@ -70,4 +130,5 @@
 - Добавлены предварительный аудит, план реализации, README и эта история изменений.
 - Добавлен исходник векторной иконки.
 - Сборка исходного приложения пока не выполнялась; архив официальных исходников не удалось получить в рабочей среде.
+
 

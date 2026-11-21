@@ -4,7 +4,7 @@
 
 The project now uses a small native C++17/Win32 launcher instead of compiling or modifying the full Delphi VCL platform. The 30.4 source remains available under `source/upstream-30.4` as a compatibility reference. The target is a quick, portable x64 GUI executable that calls the existing PortableApps launchers and companion tools.
 
-## Native launcher (0.5.0)
+## Native launcher (0.6.8)
 
 Implemented in `native/PortableAppsStart.cpp`:
 
@@ -40,6 +40,7 @@ Implemented in `native/PortableAppsStart.cpp`:
 - Confirm display scaling and usable layout on a small screen.
 - Compare the executable size and dependencies after release builds.
 
-## Known gaps in 0.5.0
+## Known gaps in 0.6.8
 
 The prototype is not a line-for-line port of Platform 30.4. It does not reorder tiles by drag, rename/delete categories, implement user-facing hide/rename actions, handle language packs, or implement all platform settings. Runtime behavior still needs confirmation on the user's PortableApps installation.
+
